@@ -694,6 +694,7 @@ function fetchNostrArticlesByTag(
   tag: string,
   relays: string[],
   limit: number = 50,
+  until?: number,
 ) {
   return lastValueFrom(
     pool
@@ -701,6 +702,7 @@ function fetchNostrArticlesByTag(
         kinds: [kinds.LongFormArticle],
         "#t": [tag],
         limit,
+        until,
       })
       .pipe(timeout(10_000), completeOnEose(), toArray()),
   );
@@ -709,8 +711,9 @@ function fetchNostrArticlesByTag(
 export async function fetchArticlesByTag(
   tag: string,
   limit: number = 50,
+  until?: number,
 ): Promise<NostrEvent[]> {
-  const cacheKey = `articles:tag:${tag}:limit:${limit}`;
+  const cacheKey = `articles:tag:${tag}:limit:${limit}:until:${until || "latest"}`;
   if (isAvailable()) {
     try {
       const cached = await getRedis().get(cacheKey);
@@ -718,7 +721,12 @@ export async function fetchArticlesByTag(
     } catch (e) {}
   }
 
-  const articles = await fetchNostrArticlesByTag(tag, AGGREGATOR_RELAYS, limit);
+  const articles = await fetchNostrArticlesByTag(
+    tag,
+    AGGREGATOR_RELAYS,
+    limit,
+    until,
+  );
 
   if (isAvailable()) {
     try {
