@@ -631,6 +631,7 @@ async function fetchNostrRelays(
         completeOnEose(),
         map((ev) => getRelayURLs(ev).filter((r) => !r.startsWith("ws://"))),
       ),
+    { defaultValue: [] },
   );
 }
 
@@ -646,10 +647,11 @@ async function fetchNostrProfile(
         limit: 1,
       })
       .pipe(timeout(10_000), completeOnEose(), map(getProfileContent)),
+    { defaultValue: undefined },
   );
 }
 
-function fetchNostrAddress(pointer: AddressPointer): Promise<NostrEvent> {
+function fetchNostrAddress(pointer: AddressPointer): Promise<NostrEvent | undefined> {
   const { kind, pubkey, relays, identifier } = pointer;
   return firstValueFrom(
     pool
@@ -659,10 +661,11 @@ function fetchNostrAddress(pointer: AddressPointer): Promise<NostrEvent> {
         "#d": [identifier],
       })
       .pipe(timeout(10_000), completeOnEose()),
+    { defaultValue: undefined },
   );
 }
 
-function fetchNostrEvent(pointer: EventPointer): Promise<NostrEvent> {
+function fetchNostrEvent(pointer: EventPointer): Promise<NostrEvent | undefined> {
   const { kind, author, id, relays } = pointer;
   return lastValueFrom(
     pool
@@ -672,6 +675,7 @@ function fetchNostrEvent(pointer: EventPointer): Promise<NostrEvent> {
         ...(author ? { authors: [author] } : {}),
       })
       .pipe(timeout(10_000), completeOnEose()),
+    { defaultValue: undefined },
   );
 }
 
