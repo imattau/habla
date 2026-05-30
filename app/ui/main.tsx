@@ -11,7 +11,7 @@ export default function Main({
   return (
     <main
       className={cn(
-        "flex flex-col items-center w-xs xsm:w-sm sm:w-xl lg:w-2xl",
+        "flex flex-col items-center w-full max-w-6xl px-4 sm:px-6 lg:px-8",
         className,
       )}
     >

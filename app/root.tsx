@@ -50,12 +50,34 @@ export const links: Route.LinksFunction = () => [
 ];
 
 // TODO: dynamic `lang`
+const themeBootstrapScript = `
+(() => {
+  try {
+    const storageKey = "habla-theme";
+    const theme = localStorage.getItem(storageKey) || "light";
+    const resolvedTheme =
+      theme === "system"
+        ? window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light"
+        : theme;
+    const root = document.documentElement;
+    root.classList.remove("light", "dark");
+    root.classList.add(resolvedTheme);
+    root.style.colorScheme = resolvedTheme;
+  } catch (error) {
+    // Ignore storage and matchMedia errors and fall back to the CSS default.
+  }
+})();
+`;
+
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
         <Meta />
         <Links />
       </head>
