@@ -11,9 +11,11 @@ export function HashtagLink({
   children: ReactNode;
   className?: string;
 }) {
+  const encodedTag = encodeURIComponent(hashtag);
   return (
     <Link
-      to={`/t/${hashtag}`}
+      reloadDocument
+      to={`/t/${encodedTag}`}
       className={cn(
         "text-primary hover:underline hover:decoration-dotted",
         className,
@@ -31,9 +33,11 @@ export default function Hashtags({
   name: string;
   hashtag: string;
 }) {
+  const encodedTag = encodeURIComponent(hashtag);
   return (
     <Link
-      to={`/t/${hashtag}`}
+      reloadDocument
+      to={`/t/${encodedTag}`}
       className="text-primary hover:underline hover:decoration-dotted"
     >
       #{name}

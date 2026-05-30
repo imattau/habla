@@ -10,12 +10,12 @@ export default function GlobalLoading() {
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
-    
+
     if (active) {
       setVisible(true);
       // Start at random small percentage
       setProgress(10);
-      
+
       // Increment slowly
       timer = setInterval(() => {
         setProgress((prev) => {
@@ -45,11 +45,11 @@ export default function GlobalLoading() {
       <div
         className={cn(
           "h-full bg-primary shadow-[0_0_10px_rgba(var(--primary),0.5)] transition-all duration-300 ease-out",
-          active ? "opacity-100" : "opacity-0"
+          active ? "opacity-100" : "opacity-0",
         )}
-        style={{ 
+        style={{
           width: `${progress}%`,
-          opacity: active || progress === 100 ? 1 : 0 
+          opacity: active || progress === 100 ? 1 : 0,
         }}
       />
     </div>

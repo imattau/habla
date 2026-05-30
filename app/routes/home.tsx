@@ -587,15 +587,7 @@ function Tags({ featured }: { featured: NostrEvent[] }) {
   return <TagCloud tags={tags} />;
 }
 
-// after hero, a section that briefly explains the value prop:
-// - open source, open standards
-// - no platform lock-in
-// - no ads
-// - direct monetization
-// - one content, many experiences: write and spread
-
-export default function Home({ loaderData }: Route.ComponentProps) {
-  // TODO: preload  all of this on the client to avoid flickering
+function LandingPage({ loaderData }: { loaderData: Route.ComponentProps["loaderData"] }) {
   const { featured, articles, categorizedArticles } = loaderData;
   return (
     <div className="py-12 pb-32 flex flex-col gap-24">
@@ -659,17 +651,28 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         featured={featured}
       />
 
-      <FeaturedHighlights {...loaderData} />
+      <FeaturedHighlights highlights={loaderData.highlights} />
 
       <FeaturedUsers featured={featured} />
 
       <ClientOnly>{() => <Donations />}</ClientOnly>
 
       <Testimonials />
-      {/*
-        <Tags featured={articles} />
-        <JoinNow />
-       */}
+
+      <Tags featured={articles} />
+
+      <JoinNow />
     </div>
   );
+}
+
+// after hero, a section that briefly explains the value prop:
+// - open source, open standards
+// - no platform lock-in
+// - no ads
+// - direct monetization
+// - one content, many experiences: write and spread
+
+export default function Home({ loaderData }: Route.ComponentProps) {
+  return <LandingPage loaderData={loaderData} />;
 }

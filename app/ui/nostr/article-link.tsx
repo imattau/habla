@@ -1,17 +1,10 @@
 import { Link } from "react-router";
 import { type NostrEvent, nip19 } from "nostr-tools";
 import { type AddressPointer } from "nostr-tools/nip19";
-import { getArticleTitle, getTagValue } from "applesauce-core/helpers";
-import { useUsers } from "~/nostr/queries";
+import { getArticleTitle } from "applesauce-core/helpers";
 import type { ReactNode } from "react";
 
 export function useArticleLink(article: NostrEvent, address: AddressPointer) {
-  const { data: users } = useUsers();
-  const user = users?.find((u) => u.pubkey === article.pubkey);
-  const identifier = getTagValue(article, "d");
-  if (user && identifier) {
-    return `/${user.username}/${encodeURIComponent(identifier)}`;
-  }
   return `/a/${nip19.naddrEncode(address)}`;
 }
 

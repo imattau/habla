@@ -21,6 +21,7 @@ export default [
     route("/t/:tag", "./routes/hashtag.tsx"),
     //route("/r/:ref", "./routes/ref.tsx"),
     route("/relay/:relay", "./routes/relay.tsx"),
+    route("/feed", "./routes/feed.tsx"),
 
     route(":username", "./routes/username.tsx"),
     route(":username/:identifier", "./routes/identifier.tsx"),
@@ -39,5 +40,6 @@ export default [
   ]),
 
   route(".well-known/nostr.json", "./routes/nip05.ts"),
+  route(".well-known/*", "./routes/not-found.ts"),
   route("sitemap.xml", "./routes/sitemap.ts"),
 ] satisfies RouteConfig;

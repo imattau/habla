@@ -802,6 +802,13 @@ export default () => {
 
   return (
     <>
+      <EditorHeader
+        canPublish={hasMainHeading}
+        onPublish={onPublish}
+        onLoad={onLoad}
+        onNew={onNew}
+        onSaveDraft={onSaveDraft}
+      />
       {editor && (
         <EditorToolbar
           editor={editor}

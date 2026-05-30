@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo } from "react";
 import Tag from "./tag";
 
 // Types
@@ -36,7 +36,7 @@ const classifyTags = (tags: Record<string, number>): TagWithSize[] => {
 
 // TagCloud component
 export function TagCloud({ tags }: { tags: Record<string, number> }) {
-  const [classifiedTags] = useState<TagWithSize[]>(() => classifyTags(tags));
+  const classifiedTags = useMemo(() => classifyTags(tags), [tags]);
 
   const renderBadge = (tag: TagWithSize, index: number) => {
     return (

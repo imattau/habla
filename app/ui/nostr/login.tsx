@@ -18,6 +18,7 @@ import {
   User as UserIcon,
   Feather,
   HandHeart,
+  Newspaper,
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useActiveAccount, useAccountManager } from "applesauce-react/hooks";
@@ -98,6 +99,10 @@ function LoggedInUser({ pubkey }: { pubkey: string }) {
     navigate("/write");
   }
 
+  function feed() {
+    navigate("/feed");
+  }
+
   return (
     <>
       <div className="flex flex-row items-center gap-2 sm:gap-4">
@@ -107,10 +112,14 @@ function LoggedInUser({ pubkey }: { pubkey: string }) {
           ) : (
             <ConnectWallet>
               <Button variant="ghost" size="icon">
-                <PlugZap />
+              <PlugZap />
               </Button>
             </ConnectWallet>
           )}
+          <Button aria-label="Feed" variant="secondary" size="sm" onClick={feed}>
+            <Newspaper className="dark:text-foreground" />
+            <span className="hidden sm:inline dark:text-foreground">Feed</span>
+          </Button>
           <Button
             aria-label="Write"
             variant="default"
