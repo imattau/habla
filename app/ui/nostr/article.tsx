@@ -1,7 +1,6 @@
 import { type NostrEvent, nip19 } from "nostr-tools";
 import { cn } from "~/lib/utils";
 import { type AddressPointer } from "nostr-tools/nip19";
-import { nip19 } from "nostr-tools";
 import {
   type ProfileContent,
   getArticleTitle,

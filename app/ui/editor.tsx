@@ -175,9 +175,8 @@ export default () => {
   );
   const hub = useActionHub();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const profile = useProfile(pubkey || "");
   const [searchParams, setSearchParams] = useSearchParams();
+  const profile = useProfile(pubkey || "");
 
   // Handle edit mode
   const editParam = searchParams.get("edit");

@@ -72,11 +72,10 @@ import GlobalLoading from "~/ui/global-loading";
 
 export default function App() {
   return (
-    <AppProviders>
-      <GlobalLoading />
+    <>
+      <ClientOnly>{() => <GlobalLoading />}</ClientOnly>
       <Outlet />
-      <ClientOnly>{() => <Toaster />}</ClientOnly>
-    </AppProviders>
+    </>
   );
 }
 

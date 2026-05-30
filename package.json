@@ -26,6 +26,10 @@
       "applesauce-react": "3.1.0"
     }
   },
+  "overrides": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
   "dependencies": {
     "@noble/hashes": "^2.0.1",
     "@number-flow/react": "^0.5.10",
@@ -70,6 +74,7 @@
     "applesauce-relay": "3.1.0",
     "applesauce-signers": "4.1.0",
     "applesauce-wallet-connect": "^3.0.0",
+    "better-sqlite3": "^12.10.0",
     "blossom-client-sdk": "^4.1.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -98,6 +103,7 @@
   "devDependencies": {
     "@react-router/dev": "^7.7.1",
     "@tailwindcss/vite": "^4.1.4",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",

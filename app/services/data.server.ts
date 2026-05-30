@@ -7,7 +7,7 @@ import {
   type ProfileContent,
 } from "applesauce-core/helpers";
 import { kinds } from "nostr-tools";
-import Redis from "ioredis";
+import Database from "better-sqlite3";
 import { type NostrEvent } from "nostr-tools";
 import { getRelayURLs } from "../lib/url";
 import type { Relay, Pubkey } from "~/types";
@@ -19,62 +19,63 @@ import type {
   AddressPointer,
 } from "nostr-tools/nip19";
 import type { DataStore, Nip05Data, Nip05Pointer, User } from "./types";
+import path from "path";
 
-const redisUrl = process.env.REDIS_URL;
-const url = redisUrl || "localhost";
-const redisOptions = {
-  maxRetriesPerRequest: 1,
-};
-const host = url.replace(/:6379$/, "");
+// ============================================================================
+// SQLite Cache
+// ============================================================================
 
-let redisInstance: Redis | undefined;
-let isRedisOffline = false;
+const dbPath = process.env.SQLITE_PATH || path.resolve("cache.db");
+let db: Database.Database;
 
-function getRedis(): Redis {
-  if (!redisInstance) {
-    console.log(`[redis] ${host}`);
-    redisInstance = redisUrl
-      ? new Redis(redisUrl, { ...redisOptions, lazyConnect: true })
-      : new Redis(6379, host, { ...redisOptions, lazyConnect: true });
-
-    // Add error listener to prevent unhandled 'error' events
-    redisInstance.on("error", (err) => {
-      if (!isRedisOffline) {
-        console.warn(
-          "[redis] connection failed, entering offline mode:",
-          err.message,
-        );
-        isRedisOffline = true;
-        // Try to reset offline mode after 1 minute
-        setTimeout(() => {
-          isRedisOffline = false;
-          console.log("[redis] attempting to exit offline mode...");
-        }, 60_000);
-      }
-    });
-
-    console.log(`[redis] client initialized (lazy)`);
+function getDb(): Database.Database {
+  if (!db) {
+    db = new Database(dbPath);
+    db.pragma("journal_mode = WAL");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS cache (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        expires_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS hash_cache (
+        key TEXT NOT NULL,
+        field TEXT NOT NULL,
+        value TEXT NOT NULL,
+        PRIMARY KEY (key, field)
+      );
+      CREATE TABLE IF NOT EXISTS set_cache (
+        key TEXT NOT NULL,
+        member TEXT NOT NULL,
+        PRIMARY KEY (key, member)
+      );
+    `);
+    console.log(`[sqlite] ${dbPath}`);
   }
-  return redisInstance;
+  return db;
 }
 
-// Helper to check if redis is available before every call
 function isAvailable() {
-  return !isRedisOffline;
+  try {
+    getDb();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ============================================================================
-// Generic Redis Cache Utilities
+// Generic SQLite Cache Utilities
 // ============================================================================
 
-/**
- * Cache a value in Redis with the given key.
- * Returns true if the value was cached successfully, false otherwise.
- */
-async function cacheValue<T>(key: string, value: T): Promise<boolean> {
-  if (!isAvailable()) return false;
+function cacheValue<T>(key: string, value: T, ttlSeconds?: number): boolean {
   try {
-    await getRedis().set(key, JSON.stringify(value));
+    const expires_at = ttlSeconds ? Date.now() + ttlSeconds * 1000 : null;
+    getDb()
+      .prepare(
+        "INSERT OR REPLACE INTO cache (key, value, expires_at) VALUES (?, ?, ?)",
+      )
+      .run(key, JSON.stringify(value), expires_at);
     return true;
   } catch (e) {
     console.warn(`[cache] failed to cache ${key}:`, e);
@@ -82,73 +83,91 @@ async function cacheValue<T>(key: string, value: T): Promise<boolean> {
   }
 }
 
-/**
- * Get a cached value from Redis.
- * Returns the parsed value if found, null otherwise.
- */
-async function getCachedValue<T>(key: string): Promise<T | null> {
-  if (!isAvailable()) return null;
+function getCachedValue<T>(key: string): T | null {
   try {
-    const json = await getRedis().get(key);
-    return json ? (safeParse(json) ?? null) : null;
+    const row = getDb()
+      .prepare("SELECT value, expires_at FROM cache WHERE key = ?")
+      .get(key) as { value: string; expires_at: number | null } | undefined;
+    if (!row) return null;
+    if (row.expires_at && row.expires_at < Date.now()) {
+      getDb().prepare("DELETE FROM cache WHERE key = ?").run(key);
+      return null;
+    }
+    return safeParse(row.value) ?? null;
   } catch (e) {
     console.warn(`[cache] failed to get ${key}:`, e);
     return null;
   }
 }
 
-/**
- * Cache a value in a Redis hash field.
- * Returns true if a new field was created, false if updated or failed.
- */
-async function cacheHashField<T>(
-  key: string,
-  field: string,
-  value: T,
-): Promise<boolean> {
-  if (!isAvailable()) return false;
+function cacheHashField<T>(key: string, field: string, value: T): boolean {
   try {
-    const result = await getRedis().hset(key, field, JSON.stringify(value));
-    return result === 1;
+    getDb()
+      .prepare(
+        "INSERT OR REPLACE INTO hash_cache (key, field, value) VALUES (?, ?, ?)",
+      )
+      .run(key, field, JSON.stringify(value));
+    return true;
   } catch (e) {
     console.warn(`[cache] failed to cache hash ${key}:${field}:`, e);
     return false;
   }
 }
 
-/**
- * Get a cached value from a Redis hash field.
- * Returns the parsed value if found, null otherwise.
- */
-async function getCachedHashField<T>(
-  key: string,
-  field: string,
-): Promise<T | null> {
-  if (!isAvailable()) return null;
+function getCachedHashField<T>(key: string, field: string): T | null {
   try {
-    const json = await getRedis().hget(key, field);
-    return json ? (safeParse(json) ?? null) : null;
+    const row = getDb()
+      .prepare("SELECT value FROM hash_cache WHERE key = ? AND field = ?")
+      .get(key, field) as { value: string } | undefined;
+    return row ? (safeParse(row.value) ?? null) : null;
   } catch (e) {
     console.warn(`[cache] failed to get hash ${key}:${field}:`, e);
     return null;
   }
 }
 
-/**
- * Execute multiple Redis operations atomically.
- * Returns true if all operations succeeded, false otherwise.
- */
-async function cacheMulti(
-  operations: (multi: ReturnType<Redis["multi"]>) => void,
-): Promise<boolean> {
-  if (!isAvailable()) return false;
+function getAllHashFields(key: string): Record<string, string> {
   try {
-    const multi = getRedis().multi();
-    operations(multi);
-    await multi.exec();
+    const rows = getDb()
+      .prepare("SELECT field, value FROM hash_cache WHERE key = ?")
+      .all(key) as { field: string; value: string }[];
+    return Object.fromEntries(rows.map((r) => [r.field, r.value]));
+  } catch (e) {
+    console.warn(`[cache] failed to get all hash fields ${key}:`, e);
+    return {};
+  }
+}
+
+function setAdd(key: string, member: string): boolean {
+  try {
+    getDb()
+      .prepare("INSERT OR IGNORE INTO set_cache (key, member) VALUES (?, ?)")
+      .run(key, member);
     return true;
   } catch (e) {
-    console.warn(`[cache] multi operation failed:`, e);
+    console.warn(`[cache] failed to add to set ${key}:`, e);
+    return false;
+  }
+}
+
+function setMembers(key: string): string[] {
+  try {
+    const rows = getDb()
+      .prepare("SELECT member FROM set_cache WHERE key = ?")
+      .all(key) as { member: string }[];
+    return rows.map((r) => r.member);
+  } catch (e) {
+    console.warn(`[cache] failed to get set members ${key}:`, e);
+    return [];
+  }
+}
+
+function cacheMulti(operations: () => void): boolean {
+  try {
+    getDb().transaction(operations)();
+    return true;
+  } catch (e) {
+    console.warn(`[cache] transaction failed:`, e);
     return false;
   }
 }
@@ -344,13 +363,7 @@ const INVALID_USERNAMES = new Set([
 ]);
 
 export async function getUsername(username: string): Promise<string | null> {
-  if (!isAvailable()) return null;
-  try {
-    return getRedis().hget(NIP05_NAMES, username);
-  } catch (e) {
-    console.warn(`[cache] failed to get username ${username}:`, e);
-    return null;
-  }
+  return getCachedHashField<string>(NIP05_NAMES, username);
 }
 
 export async function saveUser({
@@ -362,9 +375,9 @@ export async function saveUser({
   username: string;
   relays: Relay[];
 }): Promise<boolean> {
-  return cacheMulti((multi) => {
-    multi.hset(NIP05_NAMES, username, pubkey);
-    multi.hset(NIP05_RELAYS, pubkey, JSON.stringify(relays));
+  return cacheMulti(() => {
+    cacheHashField(NIP05_NAMES, username, pubkey);
+    cacheHashField(NIP05_RELAYS, pubkey, relays);
   });
 }
 
@@ -380,35 +393,22 @@ export async function getNip05(): Promise<Nip05Data> {
   if (!isAvailable()) return { names: {}, relays: {} };
 
   try {
-    const response = await getRedis()
-      .multi()
+    const namesRaw = getAllHashFields(NIP05_NAMES);
+    const relaysRaw = getAllHashFields(NIP05_RELAYS);
 
-      .hgetall(NIP05_NAMES)
-
-      .hgetall(NIP05_RELAYS)
-
-      .exec();
-
-    const names = (response?.[0]?.[1] as Record<string, string>) || {};
-
-    const relaysRaw = (response?.[1]?.[1] as Record<string, string>) || {};
+    const names: Record<string, string> = {};
+    for (const [field, value] of Object.entries(namesRaw)) {
+      names[field] = safeParse(value) ?? value;
+    }
 
     const relays: Record<string, string[]> = {};
-
     for (const [pubkey, relaysJson] of Object.entries(relaysRaw)) {
-      try {
-        relays[pubkey] = safeParse(relaysJson) ?? [];
-      } catch {
-        relays[pubkey] = [];
-      }
+      relays[pubkey] = safeParse(relaysJson) ?? [];
     }
 
     return { names, relays };
   } catch (e) {
-    if (!isRedisOffline) {
-      console.warn("[cache] failed to get nip05 data (Redis offline)");
-    }
-
+    console.warn("[cache] failed to get nip05 data:", e);
     return { names: {}, relays: {} };
   }
 }
@@ -428,9 +428,10 @@ export async function getMembers(): Promise<Nip05Pointer[]> {
 export async function getUsers(): Promise<User[]> {
   if (!isAvailable()) return [];
   try {
-    const result = await getRedis().hgetall(NIP05_NAMES);
+    const raw = getAllHashFields(NIP05_NAMES);
     const results = await Promise.allSettled(
-      Object.entries(result).map(async ([username, pubkey]) => {
+      Object.entries(raw).map(async ([username, pubkey]) => {
+        pubkey = safeParse(pubkey) ?? pubkey;
         const profile = await fetchProfile({ pubkey });
         if (profile) return { username, pubkey, profile };
         throw new Error(
@@ -451,16 +452,15 @@ export async function getArticles(
   if (!isAvailable()) return [];
   try {
     const { pubkey } = pointer;
-    const identifiers = await getRedis().smembers(articlesKey(pubkey));
+    const identifiers = setMembers(articlesKey(pubkey));
     if (identifiers.length === 0) return [];
-    const results = await getRedis().mget(
-      identifiers.map((identifier) =>
-        addressKey({ pubkey, kind: kinds.LongFormArticle, identifier }),
-      ),
-    );
-    return results
-      .map((result) => (result ? safeParse(result) : null))
-      .filter(Boolean);
+    return identifiers
+      .map((identifier) =>
+        getCachedValue<NostrEvent>(
+          addressKey({ pubkey, kind: kinds.LongFormArticle, identifier }),
+        ),
+      )
+      .filter(Boolean) as NostrEvent[];
   } catch (e) {
     console.warn(`[cache] failed to get articles for ${pointer.pubkey}:`, e);
     return [];
@@ -515,9 +515,9 @@ async function cacheArticle(
   pointer: AddressPointer,
   article: NostrEvent,
 ): Promise<boolean> {
-  return cacheMulti((multi) => {
-    multi.set(addressKey(pointer), JSON.stringify(article));
-    multi.sadd(articlesKey(article.pubkey), pointer.identifier);
+  return cacheMulti(() => {
+    cacheValue(addressKey(pointer), article);
+    setAdd(articlesKey(article.pubkey), pointer.identifier);
   });
 }
 
@@ -651,7 +651,9 @@ async function fetchNostrProfile(
   );
 }
 
-function fetchNostrAddress(pointer: AddressPointer): Promise<NostrEvent | undefined> {
+function fetchNostrAddress(
+  pointer: AddressPointer,
+): Promise<NostrEvent | undefined> {
   const { kind, pubkey, relays, identifier } = pointer;
   return firstValueFrom(
     pool
@@ -665,7 +667,9 @@ function fetchNostrAddress(pointer: AddressPointer): Promise<NostrEvent | undefi
   );
 }
 
-function fetchNostrEvent(pointer: EventPointer): Promise<NostrEvent | undefined> {
+function fetchNostrEvent(
+  pointer: EventPointer,
+): Promise<NostrEvent | undefined> {
   const { kind, author, id, relays } = pointer;
   return lastValueFrom(
     pool
@@ -714,12 +718,8 @@ export async function fetchArticlesByTag(
   until?: number,
 ): Promise<NostrEvent[]> {
   const cacheKey = `articles:tag:${tag}:limit:${limit}:until:${until || "latest"}`;
-  if (isAvailable()) {
-    try {
-      const cached = await getRedis().get(cacheKey);
-      if (cached) return safeParse(cached) ?? [];
-    } catch (e) {}
-  }
+  const cached = getCachedValue<NostrEvent[]>(cacheKey);
+  if (cached) return cached;
 
   const articles = await fetchNostrArticlesByTag(
     tag,
@@ -728,11 +728,7 @@ export async function fetchArticlesByTag(
     until,
   );
 
-  if (isAvailable()) {
-    try {
-      await getRedis().set(cacheKey, JSON.stringify(articles), "EX", 300); // 5 min cache
-    } catch (e) {}
-  }
+  cacheValue(cacheKey, articles, 300);
 
   return articles;
 }
