@@ -8,6 +8,7 @@ import {
   Check,
   Newspaper,
   LogOut,
+  Trash2,
   Palette,
   Sun,
   Moon,
@@ -46,6 +47,8 @@ function LoggedInUser({
   onLoad,
   onSaveDraft,
   onNew,
+  article,
+  onDeleteArticle,
 }: {
   pubkey: string;
 } & EditorMenuProps) {
@@ -99,6 +102,17 @@ function LoggedInUser({
         </DropdownMenuTrigger>
         <DropdownMenuContent>
           <DropdownMenuItem onClick={onNew}>New Article</DropdownMenuItem>
+          {article && onDeleteArticle ? (
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={onDeleteArticle}
+            >
+              <div className="flex flex-row items-center gap-2">
+                <Trash2 className="size-4" />
+                Delete article
+              </div>
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuLabel>Save</DropdownMenuLabel>
           <DropdownMenuItem disabled>
@@ -155,6 +169,8 @@ export interface EditorMenuProps {
   onLoad: (ev: NostrEvent) => void;
   onNew: () => void;
   onSaveDraft: () => void;
+  article?: NostrEvent;
+  onDeleteArticle?: () => void;
 }
 
 export default function EditorMenu(props: EditorMenuProps) {

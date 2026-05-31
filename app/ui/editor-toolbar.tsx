@@ -25,6 +25,7 @@ import {
   FilePlus,
   FolderOpen,
   Trash2,
+  Sparkles,
 } from "lucide-react";
 import {
   getDrafts,
@@ -55,6 +56,7 @@ interface EditorToolbarProps {
   onLoad: (ev: any) => void;
   onLoadDraft: (draftId: string) => void;
   onDeleteDraft: (draftId: string) => void;
+  onAIAssist: () => void;
   currentDraftId: string;
   timeline?: any[];
 }
@@ -100,6 +102,7 @@ export default function EditorToolbar({
   onLoad,
   onLoadDraft,
   onDeleteDraft,
+  onAIAssist,
   currentDraftId,
   timeline,
 }: EditorToolbarProps) {
@@ -383,6 +386,12 @@ export default function EditorToolbar({
                   <div className="flex flex-row items-center gap-2">
                     <FilePlus className="size-4" />
                     New
+                  </div>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onAIAssist}>
+                  <div className="flex flex-row items-center gap-2">
+                    <Sparkles className="size-4" />
+                    AI Draft Assist
                   </div>
                 </DropdownMenuItem>
 

@@ -28,6 +28,8 @@ import { default as BaseNEvent } from "./nostr/nevent";
 import { default as BaseNAddr } from "./nostr/naddr";
 import EditorHeader from "./editor-header";
 import EditorToolbar from "./editor-toolbar";
+import EditorAIHandle from "./editor-ai-handle";
+import AIDraftingAssistDialog from "./ai-drafting-assist-dialog";
 import ImageUploadDialog from "./image-upload-dialog";
 import ImageDetailsDialog from "./image-details-dialog";
 import LinkDialog from "./link-dialog";
@@ -36,6 +38,7 @@ import {
   getArticleImage,
   getArticleTitle,
   getArticleSummary,
+  getAddressPointerForEvent,
 } from "applesauce-core/helpers";
 import type {
   EventPointer,
@@ -54,6 +57,8 @@ import { useNavigate, useSearchParams } from "react-router";
 import { nip19 } from "nostr-tools";
 import { useProfile } from "~/hooks/nostr";
 import store from "~/services/data";
+import { createDeleteArticleEvent } from "~/nostr/delete-article";
+import { type AIDraftScope } from "~/services/ai-drafting";
 import {
   getDraft,
   saveDraft as saveDraftToStorage,
@@ -160,6 +165,8 @@ export default () => {
     to: number;
   } | null>(null);
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [aiAssistOpen, setAIAssistOpen] = useState(false);
+  const [aiAssistScope, setAIAssistScope] = useState<AIDraftScope | null>(null);
 
   // Get user's published articles for loading
   const account = useActiveAccount();
@@ -684,6 +691,70 @@ export default () => {
     console.log("DRAFT");
   }
 
+  async function onDeleteArticle() {
+    if (!editor || !article) return;
+
+    const confirmed = confirm(
+      "Delete this published article? This will publish a NIP-09 deletion event and cannot be undone.",
+    );
+    if (!confirmed) return;
+
+    if (!relays.length) {
+      toast.error("No publish relays available", {
+        description: "Add relays to your profile before deleting articles.",
+      });
+      return;
+    }
+
+    try {
+      const signedEvent = await createDeleteArticleEvent({
+        event: article,
+        address: editPointer ?? getAddressPointerForEvent(article),
+      });
+
+      const publishResult = await publishToRelays(
+        signedEvent,
+        relays,
+        (progress) => {
+          progress.statuses.forEach((status) => {
+            if (status.status === "error" && status.message) {
+              toast.error(`Failed to publish to ${status.relay}`, {
+                description: status.message,
+              });
+            }
+          });
+        },
+      );
+
+      if (publishResult.successCount === 0) {
+        throw new Error("Failed to publish deletion to any relay");
+      }
+
+      const draft: Draft = {
+        id: currentDraftId,
+        title,
+        json: editor.getJSON(),
+        article: undefined,
+        createdAt: initialDraft?.createdAt || Date.now(),
+        updatedAt: Date.now(),
+      };
+      saveDraftToStorage(draft);
+      setArticle(undefined);
+
+      const next = new URLSearchParams(searchParams);
+      next.delete("edit");
+      setSearchParams(next, { replace: true });
+
+      toast.success("Article deleted");
+    } catch (error) {
+      console.error("[editor] Failed to delete article:", error);
+      toast.error("Failed to delete article", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+      });
+    }
+  }
+
   async function onLoad(event: NostrEvent) {
     if (!editor) return;
 
@@ -800,6 +871,22 @@ export default () => {
     setLinkDialogOpen(true);
   }
 
+  async function applyAIDraft(
+    markdown: string,
+    scope?: AIDraftScope | null,
+  ) {
+    const htmlContent = await markdownToHTML(markdown);
+    const processed = processNostrHTML(htmlContent);
+    if (!editor) return;
+
+    if (scope) {
+      editor.chain().focus().insertContentAt({ from: scope.from, to: scope.to }, processed).run();
+      return;
+    }
+
+    editor.commands.setContent(processed);
+  }
+
   return (
     <>
       <EditorHeader
@@ -808,6 +895,8 @@ export default () => {
         onLoad={onLoad}
         onNew={onNew}
         onSaveDraft={onSaveDraft}
+        article={article}
+        onDeleteArticle={onDeleteArticle}
       />
       {editor && (
         <EditorToolbar
@@ -821,6 +910,10 @@ export default () => {
           onLoad={onLoad}
           onLoadDraft={onLoadDraft}
           onDeleteDraft={onDeleteDraft}
+          onAIAssist={() => {
+            setAIAssistScope(null);
+            setAIAssistOpen(true);
+          }}
           currentDraftId={currentDraftId}
           timeline={timeline?.map((ev) => ({
             ...ev,
@@ -841,6 +934,13 @@ export default () => {
         <EditorContent
           className="prose min-h-64 w-xs xsm:w-sm sm:w-xl lg:w-2xl"
           editor={editor}
+        />
+        <EditorAIHandle
+          editor={editor}
+          onOpen={(scope) => {
+            setAIAssistScope(scope);
+            setAIAssistOpen(true);
+          }}
         />
       </div>
       <ImageUploadDialog
@@ -891,6 +991,20 @@ export default () => {
           article ? article.tags.find((t) => t[0] === "d")?.[1] : undefined
         }
       />
+      {editor ? (
+        <AIDraftingAssistDialog
+          open={aiAssistOpen}
+          onOpenChange={(open) => {
+            setAIAssistOpen(open);
+            if (!open) {
+              setAIAssistScope(null);
+            }
+          }}
+          editor={editor}
+          scope={aiAssistScope}
+          onApplyMarkdown={applyAIDraft}
+        />
+      ) : null}
     </>
   );
 };

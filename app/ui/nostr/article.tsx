@@ -17,8 +17,8 @@ import ArticleConversation from "./article-conversation";
 import ClientOnly from "../client-only";
 import type { Relay } from "~/types";
 import { TagCloud } from "../tag-cloud";
-import { Link } from "react-router";
-import { Pencil, Share2, Copy, Check } from "lucide-react";
+import { Link, useNavigate } from "react-router";
+import { Pencil, Share2, Copy, Check, MoreHorizontal, Trash2 } from "lucide-react";
 import { Repeat2 } from "lucide-react";
 import { useActiveAccount } from "applesauce-react/hooks";
 import { useState, useMemo } from "react";
@@ -35,6 +35,13 @@ import { useRelays } from "~/hooks/nostr";
 import eventFactory from "~/services/event-factory";
 import { publishToRelays } from "~/services/publish-article";
 import { toast } from "sonner";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "~/ui/dropdown-menu";
+import { createDeleteArticleEvent } from "~/nostr/delete-article";
 
 function EditButton({ address }: { address: AddressPointer }) {
   const account = useActiveAccount();
@@ -189,6 +196,88 @@ function RepostButton({ event }: { event: NostrEvent }) {
   );
 }
 
+function DeleteArticleMenu({
+  event,
+  address,
+  relays,
+}: {
+  event: NostrEvent;
+  address: AddressPointer;
+  relays: Relay[];
+}) {
+  const navigate = useNavigate();
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  async function deleteArticle() {
+    const confirmed = confirm(
+      "Delete this article? This will publish a NIP-09 deletion event and cannot be undone.",
+    );
+    if (!confirmed || isDeleting) return;
+
+    if (relays.length === 0) {
+      toast.error("No publish relays available", {
+        description: "Add relays to your profile before deleting articles.",
+      });
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      const signedEvent = await createDeleteArticleEvent({ event, address });
+      const publishResult = await publishToRelays(signedEvent, relays, (
+        progress,
+      ) => {
+        progress.statuses.forEach((status) => {
+          if (status.status === "error" && status.message) {
+            toast.error(`Failed to publish to ${status.relay}`, {
+              description: status.message,
+            });
+          }
+        });
+      });
+
+      if (publishResult.successCount === 0) {
+        throw new Error("Failed to publish deletion to any relay");
+      }
+
+      toast.success("Article deleted");
+      navigate("/");
+    } catch (error) {
+      console.error("Failed to delete article:", error);
+      toast.error("Failed to delete article", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-accent"
+          aria-label="More article actions"
+        >
+          <MoreHorizontal className="size-4" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          variant="destructive"
+          onClick={deleteArticle}
+          disabled={isDeleting}
+        >
+          <Trash2 className="size-4" />
+          Delete article
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function Author({
   author,
   article,
@@ -226,6 +315,13 @@ function Author({
                 />
                 <RepostButton event={article} />
                 <EditButton address={address} />
+                {isOwner ? (
+                  <DeleteArticleMenu
+                    event={article}
+                    address={address}
+                    relays={relays}
+                  />
+                ) : null}
               </>
             )}
           </ClientOnly>

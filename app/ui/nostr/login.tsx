@@ -19,6 +19,7 @@ import {
   Feather,
   HandHeart,
   Newspaper,
+  Sparkles,
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { useActiveAccount, useAccountManager } from "applesauce-react/hooks";
@@ -146,6 +147,12 @@ function LoggedInUser({ pubkey }: { pubkey: string }) {
               <div className="flex flex-row items-center gap-2">
                 <UserIcon className="size-4 text-muted-foreground" />
                 Profile
+              </div>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/settings")}>
+              <div className="flex flex-row items-center gap-2">
+                <Sparkles className="size-4 text-muted-foreground" />
+                AI Drafting
               </div>
             </DropdownMenuItem>
             <DropdownMenuSub>
