@@ -221,19 +221,18 @@ async function cacheNostrRelays(
   return success;
 }
 
-async function getCachedRelays(pubkey: string): Promise<string[]> {
-  const cached = await getCachedHashField<string[]>(relaysKey(pubkey), pubkey);
-  return cached ?? [];
+function uniqueRelays(relays: string[]): string[] {
+  return [...new Set(relays.filter(Boolean))];
 }
 
 export async function fetchRelays(pubkey: string, username?: string) {
-  const cached = await getCachedRelays(pubkey);
-  if (cached && cached.length > 0) {
+  const cached = await getCachedHashField<string[]>(relaysKey(pubkey), pubkey);
+  if (cached !== null) {
     console.log(`[fetch] cached relay list ${pubkey}`);
-    return cached;
+    return uniqueRelays(cached);
   }
   console.log(`[fetch] getting ${pubkey} relay list from nostr`);
-  const relays = await fetchNostrRelays(pubkey, username);
+  const relays = uniqueRelays(await fetchNostrRelays(pubkey, username));
   await cacheNostrRelays(pubkey, relays, username);
   return relays;
 }
@@ -246,7 +245,7 @@ export async function syncRelays(pubkey: string, username?: string) {
 
   try {
     console.log(`[sync:relays] Fetching relay list from nostr for ${pubkey}`);
-    const relays = await fetchNostrRelays(pubkey, username);
+    const relays = uniqueRelays(await fetchNostrRelays(pubkey, username));
     console.log(
       `[sync:relays] Retrieved ${relays.length} relays: ${JSON.stringify(relays)}`,
     );
@@ -471,10 +470,10 @@ export async function fetchArticles({
   pubkey,
   nip05,
 }: Nip05Pointer): Promise<NostrEvent[]> {
-  const relays = await fetchRelays(pubkey, nip05);
+  const relays = uniqueRelays(await fetchRelays(pubkey, nip05));
   const articles = await fetchNostrArticles(
     pubkey,
-    AGGREGATOR_RELAYS.concat(relays),
+    uniqueRelays(AGGREGATOR_RELAYS.concat(relays)),
   );
   return articles;
 }
@@ -532,12 +531,12 @@ export async function syncArticles({
 
   try {
     console.log(`[sync:articles] Fetching relays for ${pubkey}`);
-    const relays = await fetchRelays(pubkey, nip05);
+    const relays = uniqueRelays(await fetchRelays(pubkey, nip05));
     console.log(
       `[sync:articles] Retrieved ${relays.length} relays: ${JSON.stringify(relays)}`,
     );
 
-    const combinedRelays = AGGREGATOR_RELAYS.concat(relays);
+    const combinedRelays = uniqueRelays(AGGREGATOR_RELAYS.concat(relays));
     console.log(
       `[sync:articles] Using ${combinedRelays.length} total relays (${AGGREGATOR_RELAYS.length} aggregator + ${relays.length} user): ${JSON.stringify(combinedRelays)}`,
     );
@@ -641,7 +640,7 @@ async function fetchNostrProfile(
 ): Promise<ProfileContent | undefined> {
   return lastValueFrom(
     pool
-      .req(INDEX_RELAYS.concat(relays ?? []), {
+      .req(uniqueRelays(INDEX_RELAYS.concat(relays ?? [])), {
         kinds: [kinds.Metadata],
         authors: [pubkey],
         limit: 1,
@@ -657,7 +656,7 @@ function fetchNostrAddress(
   const { kind, pubkey, relays, identifier } = pointer;
   return firstValueFrom(
     pool
-      .req(AGGREGATOR_RELAYS.concat(relays || []), {
+      .req(uniqueRelays(AGGREGATOR_RELAYS.concat(relays || [])), {
         kinds: [kind],
         authors: [pubkey],
         "#d": [identifier],
@@ -673,7 +672,7 @@ function fetchNostrEvent(
   const { kind, author, id, relays } = pointer;
   return lastValueFrom(
     pool
-      .req(AGGREGATOR_RELAYS.concat(relays || []), {
+      .req(uniqueRelays(AGGREGATOR_RELAYS.concat(relays || [])), {
         ids: [id],
         ...(kind ? { kinds: [kind] } : { kinds: [kinds.ShortTextNote] }),
         ...(author ? { authors: [author] } : {}),
@@ -686,7 +685,7 @@ function fetchNostrEvent(
 function fetchNostrArticles(pubkey: string, relays: string[]) {
   return lastValueFrom(
     pool
-      .req(relays, {
+      .req(uniqueRelays(relays), {
         kinds: [kinds.LongFormArticle],
         authors: [pubkey],
       })
@@ -702,7 +701,7 @@ function fetchNostrArticlesByTag(
 ) {
   return lastValueFrom(
     pool
-      .req(relays, {
+      .req(uniqueRelays(relays), {
         kinds: [kinds.LongFormArticle],
         "#t": [tag],
         limit,
@@ -721,12 +720,7 @@ export async function fetchArticlesByTag(
   const cached = getCachedValue<NostrEvent[]>(cacheKey);
   if (cached) return cached;
 
-  const articles = await fetchNostrArticlesByTag(
-    tag,
-    AGGREGATOR_RELAYS,
-    limit,
-    until,
-  );
+  const articles = await fetchNostrArticlesByTag(tag, AGGREGATOR_RELAYS, limit, until);
 
   cacheValue(cacheKey, articles, 300);
 

@@ -73,10 +73,13 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export async function loadData(store: DataStore) {
-  const featured = await store.getUsers();
-  const categorizedArticles = await getArticlesByCategory();
-  const articles = await getFeaturedArticles();
-  const highlights = await getFeaturedHighlights();
+  const [featured, categorizedArticles, articles, highlights] =
+    await Promise.all([
+      store.getUsers(),
+      getArticlesByCategory(),
+      getFeaturedArticles(),
+      getFeaturedHighlights(),
+    ]);
   return { featured, articles, categorizedArticles, highlights };
 }
 
