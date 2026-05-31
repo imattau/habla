@@ -139,4 +139,33 @@ describe("ai drafting settings persistence", () => {
       getDefaultAIDraftingSettings(),
     );
   });
+
+  it("retries remote hydration before falling back to defaults", async () => {
+    const { hydrateAIDraftingSettings, loadAIDraftingSettings } = await import(
+      "./ai-drafting"
+    );
+    const account = createAccount();
+    const encryptedEvent = {
+      id: "event-1",
+      kind: 30078,
+      pubkey: account.pubkey,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [["d", "ai-drafting"]],
+      content: "enc:{\"version\":1,\"settings\":{\"provider\":\"groq\",\"apiKey\":\"sk-test-123\",\"model\":\"llama-3.3-70b-versatile\"},\"updatedAt\":1}",
+      sig: "sig",
+    } as NostrEvent;
+
+    requestMock.mockReturnValueOnce(of() as any);
+    requestMock.mockReturnValueOnce(of(encryptedEvent) as any);
+
+    const hydrated = await hydrateAIDraftingSettings(account, { force: true });
+
+    expect(hydrated).toEqual({
+      provider: "groq",
+      apiKey: "sk-test-123",
+      model: "llama-3.3-70b-versatile",
+    });
+    expect(loadAIDraftingSettings(account.pubkey)).toEqual(hydrated);
+    expect(requestMock).toHaveBeenCalledTimes(2);
+  });
 });

@@ -85,6 +85,8 @@ export type AIDraftingAccount = EncryptedSigner;
 const SETTINGS_KIND = 30_078;
 const SETTINGS_IDENTIFIER = "ai-drafting";
 const SETTINGS_CACHE_KEY = "habla:ai-drafting:encrypted";
+const HYDRATE_RETRIES = 3;
+const HYDRATE_RETRY_DELAY_MS = 750;
 
 export const DEFAULT_MODELS: Record<AIProvider, string> = {
   openai: "gpt-4.1-mini",
@@ -140,6 +142,10 @@ function getDefaultEnvelope(
     settings,
     updatedAt: Date.now(),
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function readEncryptedSettingsEvent(
@@ -282,12 +288,18 @@ export async function hydrateAIDraftingSettings(
       }
     }
 
-    const remoteEvent = await fetchSettingsEvent(account.pubkey);
-    if (remoteEvent) {
-      const decrypted = await decryptSettingsEvent(account, remoteEvent);
-      if (decrypted) {
-        saveEncryptedSettingsEvent(account.pubkey, remoteEvent);
-        return storeCachedSettings(account.pubkey, decrypted);
+    for (let attempt = 0; attempt < HYDRATE_RETRIES; attempt++) {
+      const remoteEvent = await fetchSettingsEvent(account.pubkey);
+      if (remoteEvent) {
+        const decrypted = await decryptSettingsEvent(account, remoteEvent);
+        if (decrypted) {
+          saveEncryptedSettingsEvent(account.pubkey, remoteEvent);
+          return storeCachedSettings(account.pubkey, decrypted);
+        }
+      }
+
+      if (attempt < HYDRATE_RETRIES - 1) {
+        await sleep(HYDRATE_RETRY_DELAY_MS);
       }
     }
 

@@ -18,6 +18,14 @@ import { Loader2, Copy, Check } from "lucide-react";
 import pool from "~/services/relay-pool";
 import { tap } from "rxjs";
 
+const REMOTE_SIGNER_PERMISSIONS = [
+  "get_pubic_key",
+  "nip04_encrypt",
+  "nip04_decrypt",
+  "nip44_encrypt",
+  "nip44_decrypt",
+];
+
 export default function RemoteSignerLogin({
   onConnected,
 }: {
@@ -80,7 +88,7 @@ export default function RemoteSignerLogin({
         pool: signerPool,
       });
 
-      await signer.connect();
+      await signer.connect(parsed.secret, REMOTE_SIGNER_PERMISSIONS);
 
       const pubkey = await signer.getPublicKey();
       // Cast signer to any to avoid dual-package type mismatch
@@ -287,6 +295,7 @@ function QRCodeFlow({
       metadata: {
         name: "Habla",
         url: window.location.origin,
+        permissions: REMOTE_SIGNER_PERMISSIONS,
       },
     });
 
