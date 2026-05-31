@@ -112,11 +112,16 @@ function LoggedInUser({ pubkey }: { pubkey: string }) {
           ) : (
             <ConnectWallet>
               <Button variant="ghost" size="icon">
-              <PlugZap />
+                <PlugZap />
               </Button>
             </ConnectWallet>
           )}
-          <Button aria-label="Feed" variant="secondary" size="sm" onClick={feed}>
+          <Button
+            aria-label="Feed"
+            variant="secondary"
+            size="sm"
+            onClick={feed}
+          >
             <Newspaper className="dark:text-foreground" />
             <span className="hidden sm:inline dark:text-foreground">Feed</span>
           </Button>

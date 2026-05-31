@@ -91,7 +91,9 @@ export default function Hashtag({ loaderData }: Route.ComponentProps) {
       articles[0],
     );
     if (oldestArticle) {
-      fetcher.load(`/t/${encodeURIComponent(tag)}?until=${oldestArticle.created_at - 1}`);
+      fetcher.load(
+        `/t/${encodeURIComponent(tag)}?until=${oldestArticle.created_at - 1}`,
+      );
     }
   };
 

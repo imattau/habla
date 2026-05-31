@@ -19,6 +19,7 @@ import type { Relay } from "~/types";
 import { TagCloud } from "../tag-cloud";
 import { Link } from "react-router";
 import { Pencil, Share2, Copy, Check } from "lucide-react";
+import { Repeat2 } from "lucide-react";
 import { useActiveAccount } from "applesauce-react/hooks";
 import { useState, useMemo } from "react";
 import {
@@ -30,6 +31,10 @@ import {
 } from "~/ui/dialog";
 import { info } from "~/services/notifications";
 import { useArticleLink } from "~/ui/nostr/article-link";
+import { useRelays } from "~/hooks/nostr";
+import eventFactory from "~/services/event-factory";
+import { publishToRelays } from "~/services/publish-article";
+import { toast } from "sonner";
 
 function EditButton({ address }: { address: AddressPointer }) {
   const account = useActiveAccount();
@@ -128,6 +133,62 @@ function ShareButton({
   );
 }
 
+function RepostButton({ event }: { event: NostrEvent }) {
+  const account = useActiveAccount();
+  const relays = useRelays(account?.pubkey || "");
+  const [isReposting, setIsReposting] = useState(false);
+
+  async function repost() {
+    if (!account || isReposting) return;
+
+    if (relays.length === 0) {
+      toast.error("No publish relays available", {
+        description: "Add relays to your profile before boosting articles.",
+      });
+      return;
+    }
+
+    setIsReposting(true);
+    try {
+      const draft = await eventFactory.share(event);
+      const signed = await eventFactory.sign(draft);
+      const publishResult = await publishToRelays(signed, relays);
+
+      if (publishResult.successCount === 0) {
+        throw new Error("Failed to publish repost");
+      }
+
+      toast.success("Boosted");
+    } catch (error) {
+      console.error("Failed to repost article:", error);
+      toast.error("Failed to boost article", {
+        description:
+          error instanceof Error ? error.message : "Please try again",
+      });
+    } finally {
+      setIsReposting(false);
+    }
+  }
+
+  if (!account) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={repost}
+      disabled={isReposting}
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-accent disabled:opacity-50 disabled:pointer-events-none"
+    >
+      {isReposting ? (
+        <Repeat2 className="size-4 animate-spin" />
+      ) : (
+        <Repeat2 className="size-4" />
+      )}
+      Boost
+    </button>
+  );
+}
+
 function Author({
   author,
   article,
@@ -163,6 +224,7 @@ function Author({
                   event={article}
                   relays={relays}
                 />
+                <RepostButton event={article} />
                 <EditButton address={address} />
               </>
             )}

@@ -587,7 +587,11 @@ function Tags({ featured }: { featured: NostrEvent[] }) {
   return <TagCloud tags={tags} />;
 }
 
-function LandingPage({ loaderData }: { loaderData: Route.ComponentProps["loaderData"] }) {
+function LandingPage({
+  loaderData,
+}: {
+  loaderData: Route.ComponentProps["loaderData"];
+}) {
   const { featured, articles, categorizedArticles } = loaderData;
   return (
     <div className="py-12 pb-32 flex flex-col gap-24">

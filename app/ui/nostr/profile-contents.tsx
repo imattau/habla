@@ -4,24 +4,27 @@ import {
   Server,
   Newspaper,
   Highlighter,
+  Repeat2,
   CircleSlash2,
   HandHeart,
 } from "lucide-react";
 import { kinds, type NostrEvent, type Filter } from "nostr-tools";
 import {
   getArticlePublished,
+  getEmbededSharedEvent,
+  getSharedAddressPointer,
   getTagValue,
   type ProfileContent,
 } from "applesauce-core/helpers";
 import type { Pubkey } from "~/types";
-import { useRelays } from "~/hooks/nostr";
+import { useRelays, useTimeline } from "~/hooks/nostr";
 import ArticleCard from "./article-card";
 import Highlight from "./highlight";
 import Timestamp from "../timestamp";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/ui/tabs";
 import { BOOK } from "~/const";
 import RelayLink from "./relay-link";
-import Feed, { type FeedComponent } from "~/ui/nostr/feed";
+import Feed, { PureFeed, type FeedComponent } from "~/ui/nostr/feed";
 //import ZapLeaderboard from "../zap-leaderboard";
 
 const components: Record<number, FeedComponent> = {
@@ -35,6 +38,32 @@ const components: Record<number, FeedComponent> = {
         event={event}
         profile={profile}
       />
+    );
+  },
+  [kinds.GenericRepost]: ({ event, profile }) => {
+    const shared = getEmbededSharedEvent(event);
+    if (!shared || shared.kind !== kinds.LongFormArticle) return null;
+
+    const address =
+      getSharedAddressPointer(event) ||
+      ({
+        kind: kinds.LongFormArticle,
+        pubkey: shared.pubkey,
+        identifier: getTagValue(shared, "d") || "",
+      } as const);
+
+    return (
+      <div className="flex flex-col gap-1">
+        <h3 className="text-md uppercase font-light text-muted-foreground">
+          Boosted · <Timestamp timestamp={event.created_at} />
+        </h3>
+        <ArticleCard
+          noHeader
+          address={address}
+          article={shared}
+          author={profile}
+        />
+      </div>
     );
   },
   [BOOK]: ({ event, profile }) => {
@@ -77,7 +106,7 @@ const components: Record<number, FeedComponent> = {
   },
 };
 
-type ProfileTab = "articles" | "highlights" | "relays" | "books";
+type ProfileTab = "articles" | "highlights" | "boosted" | "relays" | "books";
 
 function Relays({ relays }: { relays: string[] }) {
   if (relays.length === 0) return null;
@@ -87,6 +116,41 @@ function Relays({ relays }: { relays: string[] }) {
         <RelayLink key={relay} relay={relay} />
       ))}
     </div>
+  );
+}
+
+function BoostedArticles({
+  pubkey,
+  profile,
+  relays,
+}: {
+  pubkey: Pubkey;
+  profile: ProfileContent;
+  relays: string[];
+}) {
+  const { timeline, isLoading } = useTimeline(
+    `${pubkey}-boosted`,
+    {
+      authors: [pubkey],
+      kinds: [kinds.GenericRepost],
+    },
+    relays,
+    { limit: 50 },
+  );
+
+  const boosted = (timeline || []).filter((event) => {
+    const shared = getEmbededSharedEvent(event);
+    return shared?.kind === kinds.LongFormArticle;
+  });
+
+  return (
+    <PureFeed
+      feed={boosted}
+      profile={profile}
+      isLoading={isLoading}
+      components={components}
+      className="w-full md:grid-cols-1 gap-6 md:gap-8"
+    />
   );
 }
 
@@ -119,6 +183,10 @@ export default function ProfileContents({
         <TabsTrigger value="highlights">
           <Highlighter className={icon} />
           <span className="hidden sm:block">Highlights</span>
+        </TabsTrigger>
+        <TabsTrigger value="boosted">
+          <Repeat2 className={icon} />
+          <span className="hidden sm:block">Boosted</span>
         </TabsTrigger>
         {/*
         <TabsTrigger value="supporters">
@@ -167,6 +235,14 @@ export default function ProfileContents({
             components={components}
             className="w-full md:grid-cols-1 gap-6 md:gap-8"
           />
+        ) : null}
+      </TabsContent>
+      <TabsContent
+        value="boosted"
+        className="w-full flex items-center justify-center"
+      >
+        {relays.length > 0 ? (
+          <BoostedArticles pubkey={pubkey} profile={profile} relays={relays} />
         ) : null}
       </TabsContent>
       <TabsContent value="books">

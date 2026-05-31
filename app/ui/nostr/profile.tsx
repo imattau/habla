@@ -11,6 +11,7 @@ import { prettify } from "~/lib/url";
 import { Card as SkeletonCard } from "~/ui/skeleton";
 import Banner from "~/ui/banner";
 import UserLink from "./user-link";
+import FollowButton from "./follow-button";
 
 export default function Profile({
   pubkey,
@@ -31,14 +32,17 @@ export default function Profile({
             className="border bg-background border-4 border-background size-32"
             profile={profile}
           />
-          <div className="flex flex-col gap-0">
-            <UserLink
-              withNip05={true}
-              pubkey={pubkey}
-              profile={profile}
-              img="hidden"
-              name="text-4xl line-clamp-1"
-            />
+          <div className="flex flex-row items-start gap-3 flex-wrap">
+            <div className="flex flex-col gap-0">
+              <UserLink
+                withNip05={true}
+                pubkey={pubkey}
+                profile={profile}
+                img="hidden"
+                name="text-4xl line-clamp-1"
+              />
+            </div>
+            <ClientOnly>{() => <FollowButton pubkey={pubkey} />}</ClientOnly>
           </div>
         </div>
         <div className="px-4 pt-4 flex flex-col gap-3">

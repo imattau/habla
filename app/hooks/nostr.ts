@@ -4,7 +4,11 @@ import { useState, useEffect } from "react";
 import type { NostrEvent } from "nostr-tools";
 import { map } from "rxjs";
 import { type Filter, kinds } from "nostr-tools";
-import { type EventPointer, type AddressPointer } from "nostr-tools/nip19";
+import {
+  type EventPointer,
+  type AddressPointer,
+  type ProfilePointer,
+} from "nostr-tools/nip19";
 import { useObservableMemo } from "applesauce-react/hooks";
 import {
   getSeenRelays,
@@ -27,7 +31,7 @@ import { eventLoader, addressLoader, profileLoader } from "~/services/loaders";
 import { getArticlePublished } from "applesauce-core/helpers";
 import { isReplaceableKind } from "nostr-tools/kinds";
 import { AGGREGATOR_RELAYS } from "~/const";
-import { ProfileModel } from "applesauce-core/models";
+import { ContactsModel, ProfileModel } from "applesauce-core/models";
 import type { Pubkey } from "~/types";
 
 export function useProfile(pubkey: string): ProfileContent | undefined {
@@ -105,6 +109,25 @@ export function useRelays(pubkey: string): string[] {
   }, [pubkey]);
 
   return relays || [];
+}
+
+export function useContacts(pubkey: string): ProfilePointer[] | undefined {
+  const eventStore = useEventStore();
+  const contacts = useObservableMemo(() => {
+    if (!pubkey) return undefined;
+    return eventStore.model(ContactsModel, pubkey);
+  }, [pubkey]);
+
+  useEffect(() => {
+    if (!pubkey) return;
+    const subscription = profileLoader({
+      kind: kinds.Contacts,
+      pubkey,
+    }).subscribe();
+    return () => subscription.unsubscribe();
+  }, [pubkey]);
+
+  return contacts;
 }
 
 export function useInboxRelays(pubkey: string): string[] {

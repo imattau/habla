@@ -4,10 +4,7 @@ import * as React from "react";
 
 import { cn } from "~/lib/utils";
 
-function Avatar({
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
+function Avatar({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       data-slot="avatar"
