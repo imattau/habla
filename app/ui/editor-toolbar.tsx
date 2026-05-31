@@ -165,6 +165,7 @@ export default function EditorToolbar({
               ...(state.isBold ? ["bold"] : []),
               ...(state.isItalic ? ["italic"] : []),
               ...(state.isUnderline ? ["underline"] : []),
+              ...(state.isHighlight ? ["highlight"] : []),
               ...(state.isCode ? ["code"] : []),
             ]}
             className="gap-0"
@@ -238,30 +239,19 @@ export default function EditorToolbar({
               aria-label="Inline code"
               size="sm"
               onClick={() => editor.chain().focus().toggleCode().run()}
-              className={cn("rounded-l-none")}
+              className={cn("rounded-none")}
             >
               <Code className="h-4 w-4" />
             </ToggleGroupItem>
-
-            {/* Commented out for now */}
-            {/* <ToggleGroupItem
-            value="strike"
-            aria-label="Strikethrough"
-            size="sm"
-            onClick={() => editor.chain().focus().toggleStrike().run()}
-            className={cn("rounded-none")}
-          >
-            <Strikethrough className="h-4 w-4" />
-          </ToggleGroupItem>
-          <ToggleGroupItem
-            value="highlight"
-            aria-label="Highlight"
-            size="sm"
-            onClick={() => editor.chain().focus().toggleHighlight().run()}
-            className={cn("rounded-l-none")}
-          >
-            <Highlighter className="h-4 w-4" />
-          </ToggleGroupItem> */}
+            <ToggleGroupItem
+              value="highlight"
+              aria-label="Highlight"
+              size="sm"
+              onClick={() => editor.chain().focus().toggleHighlight().run()}
+              className={cn("rounded-l-none")}
+            >
+              <Highlighter className="h-4 w-4" />
+            </ToggleGroupItem>
           </ToggleGroup>
         </div>
 

@@ -364,7 +364,7 @@ export function PureArticle({
           text={summary}
         />
       ) : null}
-      <article className="prose pb-4">
+      <article className="prose pb-4" data-article-content="true">
         <Markdown>{content}</Markdown>
       </article>
     </div>

@@ -1,11 +1,12 @@
 import type { Route } from "./+types/address";
-import { kinds, nip19 } from "nostr-tools";
+import { kinds, nip19, type NostrEvent } from "nostr-tools";
 import { default as clientStore } from "~/services/data";
 import { default as serverStore } from "~/services/data.server";
 import type { DataStore } from "~/services/types";
 import Article from "~/ui/nostr/article";
 import defaults, { articleMeta } from "~/seo";
 import Debug from "~/ui/debug";
+import Bookmarks from "~/ui/nostr/bookmarks";
 
 export function meta({ loaderData }: Route.MetaArgs) {
   if (!loaderData) return defaults;
@@ -41,8 +42,12 @@ export async function clientLoader(args: Route.MetaArgs) {
 
 const components: Record<number, any> = {
   [kinds.LongFormArticle]: Article,
-  //[kinds.BookmarkList]: BookmarksList,
-  //[kinds.Bookmarksets]: BookmarksSet,
+  [kinds.BookmarkList]: ({ event }: { event: NostrEvent }) => (
+    <Bookmarks bookmark={event} />
+  ),
+  [kinds.Bookmarksets]: ({ event }: { event: NostrEvent }) => (
+    <Bookmarks bookmark={event} />
+  ),
 };
 
 export default function Address(props: Route.ComponentProps) {

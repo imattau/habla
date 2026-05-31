@@ -1,6 +1,7 @@
 import type { Action } from "applesauce-actions";
 import type { NostrEvent } from "nostr-tools";
 import { kinds } from "nostr-tools";
+import { HighlightBlueprint } from "applesauce-factory/blueprints/highlight";
 import {
   getAddressPointerForEvent,
   getInboxes,
@@ -14,6 +15,7 @@ import {
   setSingletonTag,
 } from "applesauce-factory/operations/tag";
 import { modifyPublicTags } from "applesauce-factory/operations";
+import type { HighlightAttribution } from "applesauce-core/helpers";
 import { COMMENT } from "~/const";
 
 export {
@@ -135,6 +137,31 @@ export function Comment({
         ],
       ),
     );
+    yield await factory.sign(draft);
+  };
+}
+
+export function HighlightSelection({
+  event,
+  content,
+  sourceRelays = [],
+}: {
+  event: NostrEvent;
+  content: string;
+  sourceRelays?: string[];
+}): Action {
+  return async function* ({ factory }) {
+    const attributions: HighlightAttribution[] = [
+      {
+        pubkey: event.pubkey,
+        relays: sourceRelays,
+        role: "author",
+      },
+    ];
+
+    const draft = await factory.create(HighlightBlueprint, content, event, {
+      attributions,
+    });
     yield await factory.sign(draft);
   };
 }
