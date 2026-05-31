@@ -46,6 +46,7 @@ const ACTION_LABELS: Record<AIDraftAction, string> = {
   rewrite: "Rewrite selection",
   concise: "Make concise",
   expand: "Expand section",
+  summary: "Summarize article",
 };
 
 function defaultSectionPrompt(action: AIDraftAction): string {
@@ -74,6 +75,8 @@ export default function AIDraftingAssistDialog({
   const [provider, setProvider] = useState<AIProvider>("openai");
   const [model, setModel] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [generateTags, setGenerateTags] = useState(false);
+  const [tagCount, setTagCount] = useState("5");
   const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
@@ -130,6 +133,8 @@ export default function AIDraftingAssistDialog({
         model: model.trim() || settings.model,
         action: effectiveAction,
         sectionScoped: Boolean(scope),
+        generateTags: !scope && generateTags,
+        tagCount: Number(tagCount) || 5,
         prompt: userPrompt,
         currentMarkdown,
         includeCurrentDraft: Boolean(scope) || mode === "improve",
@@ -248,11 +253,66 @@ export default function AIDraftingAssistDialog({
             />
           </div>
 
+          {!scope && (
+            <div className="rounded-md border bg-muted/30 px-3 py-3">
+              <div className="flex items-start gap-3">
+                <input
+                  id="ai-generate-tags"
+                  type="checkbox"
+                  checked={generateTags}
+                  onChange={(e) => setGenerateTags(e.target.checked)}
+                  className="mt-1 h-4 w-4"
+                />
+                <div className="flex-1 space-y-3">
+                  <div>
+                    <Label
+                      htmlFor="ai-generate-tags"
+                      className="text-sm font-medium"
+                    >
+                      Generate tags
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Append relevant hashtags to the end of the generated
+                      article.
+                    </p>
+                  </div>
+                  <div className="grid gap-2 sm:max-w-40">
+                    <Label htmlFor="ai-tag-count" className="text-xs">
+                      Hashtags
+                    </Label>
+                    <Select
+                      value={tagCount}
+                      onValueChange={setTagCount}
+                      disabled={!generateTags}
+                    >
+                      <SelectTrigger id="ai-tag-count">
+                        <SelectValue placeholder="Count" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Array.from({ length: 10 }, (_, index) => String(index + 1)).map(
+                          (count) => (
+                            <SelectItem key={count} value={count}>
+                              {count}
+                            </SelectItem>
+                          ),
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
             {scope
               ? "The selected section will be replaced in place."
               : mode === "improve"
-              ? "The current editor content will be included as context."
+              ? generateTags
+                ? `The current editor content will be included as context, and ${tagCount} hashtag${tagCount === "1" ? "" : "s"} will be appended.`
+                : "The current editor content will be included as context."
+              : generateTags
+              ? `The current draft will be used as a light style reference only, and ${tagCount} hashtag${tagCount === "1" ? "" : "s"} will be appended.`
               : "The current draft will be used as a light style reference only."}
           </div>
         </div>

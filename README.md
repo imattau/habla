@@ -47,4 +47,4 @@ Build the app and deploy the generated `build/` output with a Node-compatible ho
 
 ---
 
-Built with React Router, TailwindCSS, and Nostr.
+Built with React Router, TailwindCSS, Nostr, and Applesauce.

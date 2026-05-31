@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~
 import {
   clearAIDraftingSettings,
   DEFAULT_MODELS,
+  fetchAvailableModels,
   getDefaultAIDraftingSettings,
   loadAIDraftingSettings,
   PROVIDER_LABELS,
@@ -17,7 +18,7 @@ import {
   type AIProvider,
 } from "~/services/ai-drafting";
 import { toast } from "sonner";
-import { CheckCircle2, AlertCircle, Sparkles, Trash2 } from "lucide-react";
+import { CheckCircle2, AlertCircle, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 
 interface AIDraftingSettingsPanelProps {
   pubkey: string;
@@ -29,9 +30,14 @@ export default function AIDraftingSettingsPanel({
   const [provider, setProvider] = useState<AIProvider>("openai");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState(DEFAULT_MODELS.openai);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [status, setStatus] = useState<
+    { kind: "success" | "error"; message: string } | null
+  >(null);
+  const [modelStatus, setModelStatus] = useState<
     { kind: "success" | "error"; message: string } | null
   >(null);
 
@@ -41,7 +47,40 @@ export default function AIDraftingSettingsPanel({
     setApiKey(settings.apiKey);
     setModel(settings.model);
     setStatus(null);
+    setModelStatus(null);
   }, [pubkey]);
+
+  async function loadModels() {
+    const currentApiKey = apiKey.trim();
+    if (!currentApiKey) {
+      setModelStatus({
+        kind: "error",
+        message: "Add an API key before loading models.",
+      });
+      return;
+    }
+
+    setIsLoadingModels(true);
+    try {
+      const models = await fetchAvailableModels(provider, currentApiKey);
+      const ids = models.map((model) => model.id);
+      const next = Array.from(new Set([model.trim() || DEFAULT_MODELS[provider], ...ids])).sort();
+      setAvailableModels(next);
+      setModelStatus({
+        kind: "success",
+        message: `Loaded ${ids.length} model${ids.length === 1 ? "" : "s"} from ${PROVIDER_LABELS[provider]}.`,
+      });
+      toast.success("Models loaded");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to load models.";
+      console.error("[ai-drafting] Failed to load models:", error);
+      setModelStatus({ kind: "error", message });
+      toast.error("Failed to load models", { description: message });
+    } finally {
+      setIsLoadingModels(false);
+    }
+  }
 
   function applyProvider(nextProvider: AIProvider) {
     setProvider(nextProvider);
@@ -51,6 +90,8 @@ export default function AIDraftingSettingsPanel({
       }
       return current;
     });
+    setAvailableModels([]);
+    setModelStatus(null);
   }
 
   async function save() {
@@ -63,6 +104,7 @@ export default function AIDraftingSettingsPanel({
       });
       setStatus({ kind: "success", message: "AI draft settings saved." });
       toast.success("AI draft settings saved");
+      void loadModels();
     } catch (error) {
       console.error("[ai-drafting] Failed to save settings:", error);
       setStatus({
@@ -106,9 +148,18 @@ export default function AIDraftingSettingsPanel({
     setProvider(defaults.provider);
     setApiKey(defaults.apiKey);
     setModel(defaults.model);
+    setAvailableModels([]);
+    setModelStatus(null);
     setStatus({ kind: "success", message: "AI draft settings cleared." });
     toast.success("AI draft settings cleared");
   }
+
+  const modelOptions = Array.from(
+    new Set([
+      model.trim() || DEFAULT_MODELS[provider],
+      ...availableModels,
+    ]),
+  );
 
   return (
     <Card className="gap-0">
@@ -138,16 +189,56 @@ export default function AIDraftingSettingsPanel({
 
         <div className="grid gap-2">
           <Label htmlFor="ai-model">Model</Label>
+          <Select value={model} onValueChange={setModel}>
+            <SelectTrigger id="ai-model">
+              <SelectValue placeholder={DEFAULT_MODELS[provider]} />
+            </SelectTrigger>
+            <SelectContent>
+              {modelOptions.map((modelId) => (
+                <SelectItem key={modelId} value={modelId}>
+                  {modelId}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Input
-            id="ai-model"
             value={model}
             onChange={(e) => setModel(e.target.value)}
             placeholder={DEFAULT_MODELS[provider]}
           />
           <p className="text-xs text-muted-foreground">
-            Leave blank to use the default model for {PROVIDER_LABELS[provider]}.
+            Select a provider model, or type a custom model ID if you need one.
           </p>
         </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={loadModels}
+            disabled={isLoadingModels || !apiKey.trim()}
+          >
+            <RefreshCw className={isLoadingModels ? "animate-spin" : ""} />
+            {isLoadingModels ? "Loading models..." : "Load models"}
+          </Button>
+        </div>
+
+        {modelStatus ? (
+          <div
+            className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${
+              modelStatus.kind === "success"
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                : "border-destructive/30 bg-destructive/10 text-destructive"
+            }`}
+          >
+            {modelStatus.kind === "success" ? (
+              <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+            ) : (
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            )}
+            <span>{modelStatus.message}</span>
+          </div>
+        ) : null}
 
         <div className="grid gap-2">
           <Label htmlFor="ai-key">API key</Label>

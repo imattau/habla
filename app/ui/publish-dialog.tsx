@@ -16,6 +16,7 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  Sparkles,
 } from "lucide-react";
 import { useActiveAccount } from "applesauce-react/hooks";
 import { useRelays, useProfile } from "~/hooks/nostr";
@@ -25,6 +26,10 @@ import ImageUploadDialog from "~/ui/image-upload-dialog";
 import store from "~/services/data";
 import { nip19 } from "nostr-tools";
 import { useNavigate } from "react-router";
+import {
+  generateAIDraft,
+  loadAIDraftingSettings,
+} from "~/services/ai-drafting";
 
 interface PublishDialogProps {
   open: boolean;
@@ -64,6 +69,7 @@ export default function PublishDialog({
   const [imageUploadOpen, setImageUploadOpen] = useState(false);
   const [relaysExpanded, setRelaysExpanded] = useState(false);
   const [articleUrl, setArticleUrl] = useState<string>("");
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
 
   // Extract title from markdown
   const title = useMemo(() => extractTitle(markdown), [markdown]);
@@ -192,6 +198,53 @@ export default function PublishDialog({
     setImageUploadOpen(false);
   }
 
+  async function handleGenerateSummary() {
+    if (!account?.pubkey) {
+      toast.error("Connect an account first");
+      return;
+    }
+
+    const settings = loadAIDraftingSettings(account.pubkey);
+    if (!settings.apiKey.trim()) {
+      toast.error("Add an AI API key in Settings first");
+      navigate("/settings");
+      return;
+    }
+
+    setIsGeneratingSummary(true);
+    try {
+      const result = await generateAIDraft({
+        provider: settings.provider,
+        apiKey: settings.apiKey,
+        model: settings.model,
+        action: "summary",
+        prompt: [
+          "Create a concise summary for the article's Summary field.",
+          "Keep it accurate, plain, and short enough for a preview tag.",
+          "Use only the article content below as source material.",
+          summary.trim()
+            ? `Current summary draft:\n${summary.trim()}`
+            : undefined,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+        currentMarkdown: markdown,
+        currentTitle: title,
+        includeCurrentDraft: true,
+      });
+
+      setSummary(result.markdown.trim());
+      toast.success("Summary generated");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to generate summary";
+      console.error("[publish-dialog] Failed to generate summary:", error);
+      toast.error("Failed to generate summary", { description: message });
+    } finally {
+      setIsGeneratingSummary(false);
+    }
+  }
+
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -244,14 +297,38 @@ export default function PublishDialog({
               )}
 
               {/* Article Summary */}
-              <Textarea
-                id="summary"
-                value={summary}
-                onChange={(e) => setSummary(e.target.value)}
-                placeholder="Write a brief summary..."
-                className="min-h-[100px]"
-                rows={4}
-              />
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor="summary"
+                    className="text-sm font-medium leading-none"
+                  >
+                    Summary
+                  </label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleGenerateSummary}
+                    disabled={isGeneratingSummary}
+                  >
+                    {isGeneratingSummary ? (
+                      <Loader2 className="size-4 mr-2 animate-spin" />
+                    ) : (
+                      <Sparkles className="size-4 mr-2" />
+                    )}
+                    AI assist
+                  </Button>
+                </div>
+                <Textarea
+                  id="summary"
+                  value={summary}
+                  onChange={(e) => setSummary(e.target.value)}
+                  placeholder="Write a brief summary..."
+                  className="min-h-[100px]"
+                  rows={4}
+                />
+              </div>
             </div>
 
             {/* Relay Selection Accordion */}

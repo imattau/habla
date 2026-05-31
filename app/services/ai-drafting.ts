@@ -6,7 +6,12 @@ export interface AIDraftingSettings {
   model: string;
 }
 
-export type AIDraftAction = "draft" | "rewrite" | "concise" | "expand";
+export type AIDraftAction =
+  | "draft"
+  | "rewrite"
+  | "concise"
+  | "expand"
+  | "summary";
 
 export interface AIDraftScope {
   from: number;
@@ -22,6 +27,8 @@ export interface GenerateDraftInput {
   model: string;
   action: AIDraftAction;
   sectionScoped?: boolean;
+  generateTags?: boolean;
+  tagCount?: number;
   prompt: string;
   currentMarkdown?: string;
   currentTitle?: string;
@@ -32,6 +39,11 @@ export interface GenerateDraftResult {
   markdown: string;
   provider: AIProvider;
   model: string;
+}
+
+export interface AvailableModel {
+  id: string;
+  ownedBy?: string;
 }
 
 const STORAGE_PREFIX = "habla:ai-drafting";
@@ -104,6 +116,12 @@ function providerEndpoint(provider: AIProvider): string {
     : "https://api.openai.com/v1/chat/completions";
 }
 
+function providerModelsEndpoint(provider: AIProvider): string {
+  return provider === "groq"
+    ? "https://api.groq.com/openai/v1/models"
+    : "https://api.openai.com/v1/models";
+}
+
 function actionInstruction(action: AIDraftAction): string {
   switch (action) {
     case "rewrite":
@@ -112,6 +130,8 @@ function actionInstruction(action: AIDraftAction): string {
       return "Make the provided text more concise without losing important meaning.";
     case "expand":
       return "Expand the provided text with useful detail, examples, and clearer transitions.";
+    case "summary":
+      return "Write a short summary of the provided article.";
     case "draft":
     default:
       return "Write a fresh article draft from the user's request.";
@@ -122,21 +142,40 @@ function buildSystemPrompt(
   includeCurrentDraft: boolean,
   action: AIDraftAction,
   sectionScoped: boolean,
+  generateTags: boolean,
+  tagCount: number,
 ): string {
   const scopeInstructions = sectionScoped
     ? [
         "Rewrite only the provided section.",
         "Return only Markdown for that section.",
         "Do not add a title, heading, or preamble.",
+        "Do not add hashtags or article-level tags.",
       ]
     : [
-        "The first line must be a single H1 title.",
-        "Return a complete article draft in Markdown.",
+        action === "summary"
+          ? "Return a short summary only, as plain prose without Markdown formatting."
+          : "The first line must be a single H1 title.",
+        action === "summary"
+          ? "Keep the summary concise, accurate, and grounded in the source article."
+          : "Return a complete article draft in Markdown.",
       ];
+
+  const tagInstructions =
+    generateTags && !sectionScoped
+      ? [
+          `Append ${tagCount} relevant hashtags at the very end of the article.`,
+          "Use lowercase hashtags that are directly relevant to the article.",
+          "Place the hashtags on their own final line, separated by spaces.",
+          "Do not add any explanation around the hashtags.",
+        ]
+      : [];
 
   return [
     "You are an expert article drafting assistant for a long-form publishing app.",
-    "Return only Markdown.",
+    action === "summary"
+      ? "Return only plain text."
+      : "Return only Markdown.",
     "Do not wrap the response in code fences.",
     "Do not add commentary or preambles.",
     actionInstruction(action),
@@ -144,14 +183,19 @@ function buildSystemPrompt(
       ? "Use the provided draft as context and improve it while preserving the author's intent."
       : "Use only the prompt and supplied excerpt as needed.",
     ...scopeInstructions,
+    ...tagInstructions,
   ].join(" ");
 }
 
 function buildUserPrompt({
+  action,
   prompt,
   currentMarkdown,
   currentTitle,
   includeCurrentDraft,
+  generateTags,
+  tagCount,
+  sectionScoped,
 }: GenerateDraftInput): string {
   const parts = [
     `Writer request:\n${prompt.trim()}`,
@@ -166,8 +210,17 @@ function buildUserPrompt({
   }
 
   parts.push(
-    "Output a polished article in Markdown with a clear title, structured sections, and no extraneous explanation.",
+    action === "summary"
+      ? "Output a single short summary paragraph with no bullets, no title, and no extra explanation."
+      : "Output a polished article in Markdown with a clear title, structured sections, and no extraneous explanation.",
   );
+
+  if (generateTags && !sectionScoped) {
+    parts.push(
+      `Add exactly ${tagCount} relevant hashtags at the end of the article.`,
+      "Keep the hashtags lowercase, concise, and directly related to the article content.",
+    );
+  }
 
   return parts.join("\n\n");
 }
@@ -183,8 +236,8 @@ export async function generateAIDraft(
     },
     body: JSON.stringify({
       model: input.model,
-      temperature: 0.7,
-      max_tokens: 1200,
+      temperature: input.action === "summary" ? 0.3 : 0.7,
+      max_tokens: input.action === "summary" ? 160 : 1200,
       messages: [
         {
           role: "system",
@@ -192,6 +245,8 @@ export async function generateAIDraft(
             Boolean(input.includeCurrentDraft),
             input.action,
             Boolean(input.sectionScoped),
+            Boolean(input.generateTags),
+            input.tagCount ?? 5,
           ),
         },
         {
@@ -226,6 +281,48 @@ export async function generateAIDraft(
     provider: input.provider,
     model: input.model,
   };
+}
+
+export async function fetchAvailableModels(
+  provider: AIProvider,
+  apiKey: string,
+): Promise<AvailableModel[]> {
+  const response = await fetch(providerModelsEndpoint(provider), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | {
+        error?: { message?: string };
+        data?: Array<{ id?: string; owned_by?: string }>;
+      }
+    | null;
+
+  if (!response.ok) {
+    throw new Error(
+      payload?.error?.message ||
+        `Failed to load models with status ${response.status}`,
+    );
+  }
+
+  const models: AvailableModel[] = [];
+  for (const model of payload?.data || []) {
+    if (!model.id) continue;
+    models.push({
+      id: model.id,
+      ownedBy: model.owned_by,
+    });
+  }
+
+  const seen = new Set<string>();
+  return models.filter((model) => {
+    if (seen.has(model.id)) return false;
+    seen.add(model.id);
+    return true;
+  });
 }
 
 export async function testAIDraftingConnection(
