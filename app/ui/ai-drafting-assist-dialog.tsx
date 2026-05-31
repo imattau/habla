@@ -19,6 +19,8 @@ import { Textarea } from "~/ui/textarea";
 import {
   type AIDraftAction,
   type AIDraftScope,
+  type AIDraftingAccount,
+  hydrateAIDraftingSettings,
   generateAIDraft,
   loadAIDraftingSettings,
   PROVIDER_LABELS,
@@ -80,11 +82,30 @@ export default function AIDraftingAssistDialog({
   const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
-    if (!open || !account?.pubkey) return;
-    const settings = loadAIDraftingSettings(account.pubkey);
-    setProvider(settings.provider);
-    setModel(settings.model);
-    setAction(scope ? "rewrite" : "draft");
+    const activeAccount = account as AIDraftingAccount | undefined;
+    if (!open || !activeAccount?.pubkey) return;
+    const settingsAccount = activeAccount;
+
+    let cancelled = false;
+    async function loadSettings() {
+      try {
+        await hydrateAIDraftingSettings(settingsAccount, { force: true });
+      } catch (error) {
+        console.warn("[ai-drafting] Failed to hydrate settings:", error);
+      }
+
+      if (cancelled) return;
+      const settings = loadAIDraftingSettings(settingsAccount.pubkey);
+      setProvider(settings.provider);
+      setModel(settings.model);
+      setAction(scope ? "rewrite" : "draft");
+    }
+
+    void loadSettings();
+
+    return () => {
+      cancelled = true;
+    };
   }, [account?.pubkey, open]);
 
   useEffect(() => {
@@ -93,12 +114,15 @@ export default function AIDraftingAssistDialog({
   }, [open, scope]);
 
   async function generate() {
-    if (!account?.pubkey) {
+    const activeAccount = account as AIDraftingAccount | undefined;
+    if (!activeAccount?.pubkey) {
       toast.error("Connect an account first");
       return;
     }
+    const settingsAccount = activeAccount;
 
-    const settings = loadAIDraftingSettings(account.pubkey);
+    await hydrateAIDraftingSettings(settingsAccount, { force: true });
+    const settings = loadAIDraftingSettings(settingsAccount.pubkey);
     if (!settings.apiKey.trim()) {
       toast.error("Add an AI API key in Settings first");
       navigate("/settings");

@@ -2,10 +2,22 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "~/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "~/ui/card";
 import { Input } from "~/ui/input";
 import { Label } from "~/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/ui/select";
 import {
   clearAIDraftingSettings,
   DEFAULT_MODELS,
@@ -14,11 +26,13 @@ import {
   loadAIDraftingSettings,
   PROVIDER_LABELS,
   saveAIDraftingSettings,
+  hydrateAIDraftingSettings,
   testAIDraftingConnection,
   type AIProvider,
 } from "~/services/ai-drafting";
 import { toast } from "sonner";
 import { CheckCircle2, AlertCircle, RefreshCw, Sparkles, Trash2 } from "lucide-react";
+import { useActiveAccount } from "applesauce-react/hooks";
 
 interface AIDraftingSettingsPanelProps {
   pubkey: string;
@@ -27,6 +41,7 @@ interface AIDraftingSettingsPanelProps {
 export default function AIDraftingSettingsPanel({
   pubkey,
 }: AIDraftingSettingsPanelProps) {
+  const account = useActiveAccount();
   const [provider, setProvider] = useState<AIProvider>("openai");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState(DEFAULT_MODELS.openai);
@@ -42,13 +57,34 @@ export default function AIDraftingSettingsPanel({
   >(null);
 
   useEffect(() => {
-    const settings = loadAIDraftingSettings(pubkey);
-    setProvider(settings.provider);
-    setApiKey(settings.apiKey);
-    setModel(settings.model);
-    setStatus(null);
-    setModelStatus(null);
-  }, [pubkey]);
+    let cancelled = false;
+
+    async function loadSettings() {
+      if (account?.pubkey !== pubkey) {
+        return;
+      }
+
+      try {
+        await hydrateAIDraftingSettings(account, { force: true });
+      } catch (error) {
+        console.warn("[ai-drafting] Failed to hydrate settings:", error);
+      }
+
+      if (cancelled) return;
+      const settings = loadAIDraftingSettings(pubkey);
+      setProvider(settings.provider);
+      setApiKey(settings.apiKey);
+      setModel(settings.model);
+      setStatus(null);
+      setModelStatus(null);
+    }
+
+    void loadSettings();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [account, pubkey]);
 
   async function loadModels() {
     const currentApiKey = apiKey.trim();
@@ -97,7 +133,11 @@ export default function AIDraftingSettingsPanel({
   async function save() {
     setIsSaving(true);
     try {
-      saveAIDraftingSettings(pubkey, {
+      if (!account) {
+        throw new Error("Connect an account first");
+      }
+
+      await saveAIDraftingSettings(account, {
         provider,
         apiKey: apiKey.trim(),
         model: model.trim() || DEFAULT_MODELS[provider],
@@ -143,15 +183,30 @@ export default function AIDraftingSettingsPanel({
   }
 
   function clear() {
-    clearAIDraftingSettings(pubkey);
-    const defaults = getDefaultAIDraftingSettings();
-    setProvider(defaults.provider);
-    setApiKey(defaults.apiKey);
-    setModel(defaults.model);
-    setAvailableModels([]);
-    setModelStatus(null);
-    setStatus({ kind: "success", message: "AI draft settings cleared." });
-    toast.success("AI draft settings cleared");
+    if (!account) {
+      toast.error("Connect an account first");
+      return;
+    }
+
+    void (async () => {
+      try {
+        await clearAIDraftingSettings(account);
+        const defaults = getDefaultAIDraftingSettings();
+        setProvider(defaults.provider);
+        setApiKey(defaults.apiKey);
+        setModel(defaults.model);
+        setAvailableModels([]);
+        setModelStatus(null);
+        setStatus({ kind: "success", message: "AI draft settings cleared." });
+        toast.success("AI draft settings cleared");
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to clear settings.";
+        console.error("[ai-drafting] Failed to clear settings:", error);
+        setStatus({ kind: "error", message });
+        toast.error("Failed to clear AI draft settings", { description: message });
+      }
+    })();
   }
 
   const modelOptions = Array.from(

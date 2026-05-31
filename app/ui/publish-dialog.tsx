@@ -28,6 +28,7 @@ import { nip19 } from "nostr-tools";
 import { useNavigate } from "react-router";
 import {
   generateAIDraft,
+  hydrateAIDraftingSettings,
   loadAIDraftingSettings,
 } from "~/services/ai-drafting";
 
@@ -204,6 +205,7 @@ export default function PublishDialog({
       return;
     }
 
+    await hydrateAIDraftingSettings(account, { force: true });
     const settings = loadAIDraftingSettings(account.pubkey);
     if (!settings.apiKey.trim()) {
       toast.error("Add an AI API key in Settings first");

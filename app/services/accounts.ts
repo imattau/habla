@@ -6,6 +6,7 @@ import {
 } from "applesauce-accounts/accounts";
 import * as Signers from "applesauce-signers";
 import { NostrConnectSigner } from "applesauce-signers";
+import { hydrateAIDraftingSettings } from "~/services/ai-drafting";
 import pool from "./relay-pool";
 
 const ACCOUNTS = "accounts";
@@ -94,6 +95,10 @@ accountManager.active$.subscribe((account) => {
   if (typeof window !== "undefined") {
     if (account) localStorage.setItem(ACTIVE_ACCOUNT, account.id);
     else localStorage.removeItem(ACTIVE_ACCOUNT);
+  }
+
+  if (account && typeof window !== "undefined") {
+    void hydrateAIDraftingSettings(account, { force: true });
   }
 });
 

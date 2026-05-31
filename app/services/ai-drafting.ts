@@ -1,3 +1,11 @@
+import { safeParse } from "applesauce-core/helpers/json";
+import { firstValueFrom, toArray } from "rxjs";
+import { kinds, type NostrEvent } from "nostr-tools";
+import { AGGREGATOR_RELAYS } from "~/const";
+import { getRelayURLs } from "~/lib/url";
+import { profileLoader } from "~/services/loaders";
+import pool from "~/services/relay-pool";
+
 export type AIProvider = "openai" | "groq";
 
 export interface AIDraftingSettings {
@@ -46,7 +54,37 @@ export interface AvailableModel {
   ownedBy?: string;
 }
 
-const STORAGE_PREFIX = "habla:ai-drafting";
+type AIDraftingSettingsEnvelope = {
+  version: 1;
+  settings: AIDraftingSettings;
+  updatedAt: number;
+};
+
+type EncryptedAIDraftingSettingsEvent = NostrEvent;
+
+type EncryptedSigner = {
+  pubkey: string;
+  nip04?: {
+    encrypt: (pubkey: string, plaintext: string) => Promise<string>;
+    decrypt: (pubkey: string, ciphertext: string) => Promise<string>;
+  };
+  nip44?: {
+    encrypt: (pubkey: string, plaintext: string) => Promise<string>;
+    decrypt: (pubkey: string, ciphertext: string) => Promise<string>;
+  };
+  signEvent: (template: {
+    kind: number;
+    created_at: number;
+    tags: string[][];
+    content: string;
+  }) => Promise<NostrEvent>;
+};
+
+export type AIDraftingAccount = EncryptedSigner;
+
+const SETTINGS_KIND = 30_078;
+const SETTINGS_IDENTIFIER = "ai-drafting";
+const SETTINGS_CACHE_KEY = "habla:ai-drafting:encrypted";
 
 export const DEFAULT_MODELS: Record<AIProvider, string> = {
   openai: "gpt-4.1-mini",
@@ -58,8 +96,11 @@ export const PROVIDER_LABELS: Record<AIProvider, string> = {
   groq: "Groq",
 };
 
-function storageKey(pubkey: string): string {
-  return `${STORAGE_PREFIX}:${pubkey}`;
+const settingsCache = new Map<string, AIDraftingSettings>();
+const hydrationInFlight = new Map<string, Promise<AIDraftingSettings>>();
+
+function encryptedStorageKey(pubkey: string): string {
+  return `${SETTINGS_CACHE_KEY}:${pubkey}`;
 }
 
 export function getDefaultAIDraftingSettings(
@@ -72,42 +113,241 @@ export function getDefaultAIDraftingSettings(
   };
 }
 
-export function loadAIDraftingSettings(pubkey: string): AIDraftingSettings {
-  if (typeof window === "undefined") {
-    return getDefaultAIDraftingSettings();
-  }
+function normalizeAIDraftingSettings(
+  settings: Partial<AIDraftingSettings> | null | undefined,
+): AIDraftingSettings {
+  const provider =
+    settings?.provider === "groq" || settings?.provider === "openai"
+      ? settings.provider
+      : "openai";
 
-  const raw = window.localStorage.getItem(storageKey(pubkey));
-  if (!raw) return getDefaultAIDraftingSettings();
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<AIDraftingSettings>;
-    return {
-      provider:
-        parsed.provider === "groq" || parsed.provider === "openai"
-          ? parsed.provider
-          : "openai",
-      apiKey: parsed.apiKey || "",
-      model:
-        parsed.model || DEFAULT_MODELS[parsed.provider === "groq" ? "groq" : "openai"],
-    };
-  } catch (error) {
-    console.error("[ai-drafting] Failed to load settings:", error);
-    return getDefaultAIDraftingSettings();
-  }
+  return {
+    provider,
+    apiKey: settings?.apiKey?.trim() || "",
+    model: settings?.model?.trim() || DEFAULT_MODELS[provider],
+  };
 }
 
-export function saveAIDraftingSettings(
+function getEncryptionMethods(account: EncryptedSigner) {
+  return account.nip44 ?? account.nip04 ?? null;
+}
+
+function getDefaultEnvelope(
+  settings: AIDraftingSettings = getDefaultAIDraftingSettings(),
+): AIDraftingSettingsEnvelope {
+  return {
+    version: 1,
+    settings,
+    updatedAt: Date.now(),
+  };
+}
+
+function readEncryptedSettingsEvent(
   pubkey: string,
-  settings: AIDraftingSettings,
+): EncryptedAIDraftingSettingsEvent | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const raw = window.localStorage.getItem(encryptedStorageKey(pubkey));
+  if (!raw) return null;
+
+  const parsed = safeParse(raw) as EncryptedAIDraftingSettingsEvent | null;
+  if (!parsed || typeof parsed !== "object") return null;
+  if (parsed.kind !== SETTINGS_KIND) return null;
+  return parsed;
+}
+
+function saveEncryptedSettingsEvent(
+  pubkey: string,
+  event: EncryptedAIDraftingSettingsEvent,
 ): void {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(storageKey(pubkey), JSON.stringify(settings));
+  window.localStorage.setItem(encryptedStorageKey(pubkey), JSON.stringify(event));
 }
 
-export function clearAIDraftingSettings(pubkey: string): void {
+function clearEncryptedSettingsEvent(pubkey: string): void {
   if (typeof window === "undefined") return;
-  window.localStorage.removeItem(storageKey(pubkey));
+  window.localStorage.removeItem(encryptedStorageKey(pubkey));
+}
+
+function storeCachedSettings(
+  pubkey: string,
+  settings: AIDraftingSettings,
+): AIDraftingSettings {
+  const normalized = normalizeAIDraftingSettings(settings);
+  settingsCache.set(pubkey, normalized);
+  return normalized;
+}
+
+export function loadAIDraftingSettings(pubkey: string): AIDraftingSettings {
+  return settingsCache.get(pubkey) || getDefaultAIDraftingSettings();
+}
+
+export function hasLoadedAIDraftingSettings(pubkey: string): boolean {
+  return settingsCache.has(pubkey);
+}
+
+async function fetchUserRelays(pubkey: string): Promise<string[]> {
+  try {
+    const event = await firstValueFrom(profileLoader({ kind: kinds.RelayList, pubkey }));
+    return event ? getRelayURLs(event) : [];
+  } catch (error) {
+    console.warn("[ai-drafting] Failed to load relay list:", error);
+    return [];
+  }
+}
+
+async function fetchSettingsEvent(pubkey: string): Promise<NostrEvent | null> {
+  const relays = [...new Set([...AGGREGATOR_RELAYS, ...(await fetchUserRelays(pubkey))])];
+  try {
+    const events = await firstValueFrom(
+      pool
+        .request(relays, {
+          kinds: [SETTINGS_KIND],
+          authors: [pubkey],
+          "#d": [SETTINGS_IDENTIFIER],
+          limit: 10,
+        })
+        .pipe(toArray()),
+    );
+
+    const latest = [...events].sort((a, b) => b.created_at - a.created_at)[0];
+    return latest || null;
+  } catch (error) {
+    console.warn("[ai-drafting] Failed to fetch remote settings:", error);
+    return null;
+  }
+}
+
+async function getSettingsRelays(pubkey: string): Promise<string[]> {
+  return [...new Set([...AGGREGATOR_RELAYS, ...(await fetchUserRelays(pubkey))])];
+}
+
+async function decryptSettingsEvent(
+  account: EncryptedSigner,
+  event: EncryptedAIDraftingSettingsEvent,
+): Promise<AIDraftingSettings | null> {
+  const methods = [];
+  if (account.nip44) methods.push(account.nip44);
+  if (account.nip04) methods.push(account.nip04);
+
+  for (const method of methods) {
+    try {
+      const plaintext = await method.decrypt(account.pubkey, event.content);
+      const parsed = safeParse(plaintext) as AIDraftingSettingsEnvelope | null;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        parsed.version === 1 &&
+        parsed.settings
+      ) {
+        return normalizeAIDraftingSettings(parsed.settings);
+      }
+    } catch (error) {
+      // Try the next cipher.
+      console.debug("[ai-drafting] Failed to decrypt settings event:", error);
+    }
+  }
+
+  return null;
+}
+
+function getCachedEncryptedSettings(
+  pubkey: string,
+): EncryptedAIDraftingSettingsEvent | null {
+  return readEncryptedSettingsEvent(pubkey);
+}
+
+export async function hydrateAIDraftingSettings(
+  account: EncryptedSigner,
+  options: { force?: boolean } = {},
+): Promise<AIDraftingSettings> {
+  const existing = settingsCache.get(account.pubkey);
+  if (existing && !options.force) return existing;
+
+  const inFlight = hydrationInFlight.get(account.pubkey);
+  if (inFlight) return inFlight;
+
+  const task = (async () => {
+    let cachedSettings: AIDraftingSettings | null = null;
+    const cachedEvent = getCachedEncryptedSettings(account.pubkey);
+    if (cachedEvent) {
+      const decrypted = await decryptSettingsEvent(account, cachedEvent);
+      if (decrypted) {
+        cachedSettings = storeCachedSettings(account.pubkey, decrypted);
+        if (!options.force) {
+          return cachedSettings;
+        }
+      }
+    }
+
+    const remoteEvent = await fetchSettingsEvent(account.pubkey);
+    if (remoteEvent) {
+      const decrypted = await decryptSettingsEvent(account, remoteEvent);
+      if (decrypted) {
+        saveEncryptedSettingsEvent(account.pubkey, remoteEvent);
+        return storeCachedSettings(account.pubkey, decrypted);
+      }
+    }
+
+    return (
+      cachedSettings ||
+      storeCachedSettings(account.pubkey, getDefaultAIDraftingSettings())
+    );
+  })();
+
+  hydrationInFlight.set(account.pubkey, task);
+  try {
+    return await task;
+  } finally {
+    hydrationInFlight.delete(account.pubkey);
+  }
+}
+
+async function publishSettingsEvent(
+  account: EncryptedSigner,
+  settings: AIDraftingSettings,
+): Promise<NostrEvent> {
+  const envelope = JSON.stringify(getDefaultEnvelope(normalizeAIDraftingSettings(settings)));
+  const cipher = getEncryptionMethods(account);
+  if (!cipher) {
+    throw new Error("Your account does not support encrypted settings sync");
+  }
+
+  const content = await cipher.encrypt(account.pubkey, envelope);
+  const event = await account.signEvent({
+    kind: SETTINGS_KIND,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [["d", SETTINGS_IDENTIFIER]],
+    content,
+  });
+  const relays = await getSettingsRelays(account.pubkey);
+  const publishResults = await pool.publish(relays, event);
+  if (!publishResults.some((result) => result.ok)) {
+    throw new Error("Failed to publish AI draft settings to relays");
+  }
+  return event;
+}
+
+export async function saveAIDraftingSettings(
+  account: EncryptedSigner,
+  settings: AIDraftingSettings,
+): Promise<void> {
+  const normalized = normalizeAIDraftingSettings(settings);
+  const event = await publishSettingsEvent(account, normalized);
+  saveEncryptedSettingsEvent(account.pubkey, event);
+  storeCachedSettings(account.pubkey, normalized);
+}
+
+export async function clearAIDraftingSettings(
+  account: EncryptedSigner,
+): Promise<void> {
+  const defaults = getDefaultAIDraftingSettings();
+  const event = await publishSettingsEvent(account, defaults);
+  clearEncryptedSettingsEvent(account.pubkey);
+  saveEncryptedSettingsEvent(account.pubkey, event);
+  storeCachedSettings(account.pubkey, defaults);
 }
 
 function providerEndpoint(provider: AIProvider): string {
