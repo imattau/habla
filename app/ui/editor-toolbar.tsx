@@ -44,6 +44,7 @@ import {
 } from "~/ui/dropdown-menu";
 import { Separator } from "~/ui/separator";
 import { cn } from "~/lib/utils";
+import { Button } from "~/ui/button";
 
 interface EditorToolbarProps {
   editor: Editor;
@@ -362,40 +363,168 @@ export default function EditorToolbar({
 
         {/* Group 5: Menu */}
         <div className="flex items-center">
-          <ToggleGroup
-            type="multiple"
-            variant="outline"
-            value={[]}
-            className="gap-0"
-          >
+          <div className="flex items-center lg:hidden">
+            <ToggleGroup
+              type="multiple"
+              variant="outline"
+              value={[]}
+              className="gap-0"
+            >
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <ToggleGroupItem value="menu" aria-label="Menu" size="sm">
+                    <Menu className="h-4 w-4" />
+                    <span className="ml-1">Menu</span>
+                  </ToggleGroupItem>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={onPublish} disabled={!canPublish}>
+                    <div className="flex flex-row items-center gap-2">
+                      <Send className="size-4" />
+                      Publish
+                    </div>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onNew}>
+                    <div className="flex flex-row items-center gap-2">
+                      <FilePlus className="size-4" />
+                      New
+                    </div>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onAIAssist}>
+                    <div className="flex flex-row items-center gap-2">
+                      <Sparkles className="size-4" />
+                      AI Draft Assist
+                    </div>
+                  </DropdownMenuItem>
+
+                  {/* Drafts submenu */}
+                  {drafts.length > 0 && (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <div className="flex flex-row items-center gap-2">
+                          <FileText className="size-4" />
+                          Drafts ({drafts.length})
+                        </div>
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent>
+                        {drafts.map((draft) => (
+                          <div
+                            key={draft.id}
+                            className="flex items-center group"
+                          >
+                            <DropdownMenuItem
+                              onClick={() => onLoadDraft(draft.id)}
+                              className="flex-1"
+                              disabled={draft.id === currentDraftId}
+                            >
+                              <div className="flex flex-col items-start">
+                                <span className="text-sm">
+                                  {draft.title || "Untitled"}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  {formatRelativeTime(draft.updatedAt)}
+                                </span>
+                              </div>
+                            </DropdownMenuItem>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteDraft(draft.id);
+                              }}
+                              className="p-2 opacity-0 hover:bg-destructive/10 group-hover:opacity-100"
+                              aria-label="Delete draft"
+                            >
+                              <Trash2 className="size-3 text-destructive" />
+                            </button>
+                          </div>
+                        ))}
+                        <DropdownMenuItem
+                          onClick={() => {
+                            if (confirm("Clear all drafts?")) {
+                              clearAllDrafts();
+                              onNew();
+                            }
+                          }}
+                          className="text-destructive"
+                        >
+                          <Trash2 className="size-4 mr-2" />
+                          Clear all drafts
+                        </DropdownMenuItem>
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  )}
+
+                  {/* Published articles submenu */}
+                  {timeline && timeline.length > 0 && (
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <div className="flex flex-row items-center gap-2">
+                          <FolderOpen className="size-4" />
+                          Load Published
+                        </div>
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent>
+                        {timeline.map((article) => (
+                          <DropdownMenuItem
+                            key={article.id}
+                            onClick={() => onLoad(article)}
+                          >
+                            {article.title || "Untitled"}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </ToggleGroup>
+          </div>
+
+          <div className="hidden items-center gap-1 lg:flex">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="Publish"
+              title="Publish"
+              onClick={onPublish}
+              disabled={!canPublish}
+            >
+              <Send className="size-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="New article"
+              title="New article"
+              onClick={onNew}
+            >
+              <FilePlus className="size-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="AI Draft Assist"
+              title="AI Draft Assist"
+              onClick={onAIAssist}
+            >
+              <Sparkles className="size-4" />
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <ToggleGroupItem value="menu" aria-label="Menu" size="sm">
-                  <Menu className="h-4 w-4" />
-                  <span className="ml-1">Menu</span>
-                </ToggleGroupItem>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label="More actions"
+                  title="More actions"
+                >
+                  <Menu className="size-4" />
+                </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={onPublish} disabled={!canPublish}>
-                  <div className="flex flex-row items-center gap-2">
-                    <Send className="size-4" />
-                    Publish
-                  </div>
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onNew}>
-                  <div className="flex flex-row items-center gap-2">
-                    <FilePlus className="size-4" />
-                    New
-                  </div>
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onAIAssist}>
-                  <div className="flex flex-row items-center gap-2">
-                    <Sparkles className="size-4" />
-                    AI Draft Assist
-                  </div>
-                </DropdownMenuItem>
-
-                {/* Drafts submenu */}
                 {drafts.length > 0 && (
                   <DropdownMenuSub>
                     <DropdownMenuSubTrigger>
@@ -406,7 +535,10 @@ export default function EditorToolbar({
                     </DropdownMenuSubTrigger>
                     <DropdownMenuSubContent>
                       {drafts.map((draft) => (
-                        <div key={draft.id} className="flex items-center group">
+                        <div
+                          key={draft.id}
+                          className="flex items-center group"
+                        >
                           <DropdownMenuItem
                             onClick={() => onLoadDraft(draft.id)}
                             className="flex-1"
@@ -426,7 +558,7 @@ export default function EditorToolbar({
                               e.stopPropagation();
                               onDeleteDraft(draft.id);
                             }}
-                            className="p-2 opacity-0 group-hover:opacity-100 hover:bg-destructive/10"
+                            className="p-2 opacity-0 hover:bg-destructive/10 group-hover:opacity-100"
                             aria-label="Delete draft"
                           >
                             <Trash2 className="size-3 text-destructive" />
@@ -449,7 +581,6 @@ export default function EditorToolbar({
                   </DropdownMenuSub>
                 )}
 
-                {/* Published articles submenu */}
                 {timeline && timeline.length > 0 && (
                   <DropdownMenuSub>
                     <DropdownMenuSubTrigger>
@@ -472,7 +603,7 @@ export default function EditorToolbar({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-          </ToggleGroup>
+          </div>
         </div>
       </div>
     </div>
