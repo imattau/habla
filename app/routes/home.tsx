@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { Link } from "react-router";
+import { useActiveAccount } from "applesauce-react/hooks";
 import { getTagValue } from "applesauce-core/helpers";
 import { type NostrEvent } from "nostr-tools";
 import {
@@ -33,7 +34,6 @@ import {
   features,
   getArticlesByCategory,
   getFeaturedArticles,
-  getFeaturedHighlights,
   testimonials,
 } from "~/featured";
 import defaults from "~/seo";
@@ -68,6 +68,8 @@ import Blockquote from "~/ui/blockquote";
 import UserLink from "~/ui/nostr/user-link";
 import { EventReply } from "~/ui/nostr/reply";
 
+const HIGHLIGHTS_LIMIT = 6;
+
 export function meta({}: Route.MetaArgs) {
   return defaults;
 }
@@ -78,7 +80,7 @@ export async function loadData(store: DataStore) {
       store.getUsers(),
       getArticlesByCategory(),
       getFeaturedArticles(),
-      getFeaturedHighlights(),
+      store.fetchHighlights(HIGHLIGHTS_LIMIT),
     ]);
   return { featured, articles, categorizedArticles, highlights };
 }
@@ -595,21 +597,26 @@ function LandingPage({
 }: {
   loaderData: Route.ComponentProps["loaderData"];
 }) {
+  const account = useActiveAccount();
   const { featured, articles, categorizedArticles } = loaderData;
   return (
     <div className="py-12 pb-32 flex flex-col gap-24">
-      <div className="flex flex-col gap-16 md:gap-64 md:flex-row items-center justify-between">
-        <Hero />
-        <Features />
-      </div>
+      {account ? null : (
+        <>
+          <div className="flex flex-col gap-16 md:gap-64 md:flex-row items-center justify-between">
+            <Hero />
+            <Features />
+          </div>
 
-      <CategorySection
-        title="Welcome"
-        icon={<HeartHandshake />}
-        articles={[faq, features]}
-        featured={featured}
-        iconColor="text-red-400 dark:text-red-200"
-      />
+          <CategorySection
+            title="Welcome"
+            icon={<HeartHandshake />}
+            articles={[faq, features]}
+            featured={featured}
+            iconColor="text-red-400 dark:text-red-200"
+          />
+        </>
+      )}
 
       <CategorySection
         title="Social Media"
@@ -660,15 +667,19 @@ function LandingPage({
 
       <FeaturedHighlights highlights={loaderData.highlights} />
 
-      <FeaturedUsers featured={featured} />
+      {account ? null : (
+        <>
+          <FeaturedUsers featured={featured} />
 
-      <ClientOnly>{() => <Donations />}</ClientOnly>
+          <ClientOnly>{() => <Donations />}</ClientOnly>
 
-      <Testimonials />
+          <Testimonials />
 
-      <Tags featured={articles} />
+          <Tags featured={articles} />
 
-      <JoinNow />
+          <JoinNow />
+        </>
+      )}
     </div>
   );
 }
