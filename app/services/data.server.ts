@@ -9,6 +9,7 @@ import {
 import { kinds } from "nostr-tools";
 import Database from "better-sqlite3";
 import { type NostrEvent } from "nostr-tools";
+import { isReplaceableKind } from "nostr-tools/kinds";
 import { getRelayURLs } from "../lib/url";
 import type { Relay, Pubkey } from "~/types";
 import pool from "./relay-pool";
@@ -62,6 +63,29 @@ function isAvailable() {
   } catch {
     return false;
   }
+}
+
+function getEventTimelineKey(event: NostrEvent) {
+  if (isReplaceableKind(event.kind)) {
+    const identifier = getTagValue(event, "d") || "";
+    return `${event.kind}:${event.pubkey}:${identifier}`;
+  }
+
+  return event.id;
+}
+
+function dedupeEvents(events: NostrEvent[]) {
+  const seen = new Set<string>();
+  const deduped: NostrEvent[] = [];
+
+  for (const event of events) {
+    const key = getEventTimelineKey(event);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(event);
+  }
+
+  return deduped;
 }
 
 // ============================================================================
@@ -476,11 +500,10 @@ export async function fetchArticles({
   nip05,
 }: Nip05Pointer): Promise<NostrEvent[]> {
   const relays = uniqueRelays(await fetchRelays(pubkey, nip05));
-  const articles = await fetchNostrArticles(
+  return fetchNostrArticles(
     pubkey,
     uniqueRelays(AGGREGATOR_RELAYS.concat(relays)),
   );
-  return articles;
 }
 
 // ============================================================================
@@ -695,7 +718,7 @@ function fetchNostrArticles(pubkey: string, relays: string[]) {
         authors: [pubkey],
       })
       .pipe(timeout(10_000), completeOnEose(), toArray()),
-  );
+  ).then(dedupeEvents);
 }
 
 function fetchNostrArticlesByTag(
@@ -713,7 +736,7 @@ function fetchNostrArticlesByTag(
         until,
       })
       .pipe(timeout(10_000), completeOnEose(), toArray()),
-  );
+  ).then(dedupeEvents);
 }
 
 function fetchNostrHighlights(limit: number = 12) {
@@ -735,9 +758,11 @@ export async function fetchArticlesByTag(
 ): Promise<NostrEvent[]> {
   const cacheKey = `articles:tag:${tag}:limit:${limit}:until:${until || "latest"}`;
   const cached = getCachedValue<NostrEvent[]>(cacheKey);
-  if (cached) return cached;
+  if (cached) return dedupeEvents(cached);
 
-  const articles = await fetchNostrArticlesByTag(tag, AGGREGATOR_RELAYS, limit, until);
+  const articles = dedupeEvents(
+    await fetchNostrArticlesByTag(tag, AGGREGATOR_RELAYS, limit, until),
+  );
 
   cacheValue(cacheKey, articles, 300);
 

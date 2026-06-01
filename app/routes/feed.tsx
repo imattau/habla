@@ -118,8 +118,6 @@ function GlobalFeedView() {
         kinds: [kinds.LongFormArticle, kinds.Highlights],
       }}
       components={components}
-      className="grid-cols-1 gap-6 md:grid-cols-1 md:gap-8"
-      showSeparator
       showRelationshipBadges
     />
   );
@@ -299,8 +297,6 @@ function CircleFeedView() {
           kinds: [kinds.LongFormArticle, kinds.Highlights],
       }}
       components={components}
-      className="grid-cols-1 gap-6 md:grid-cols-1 md:gap-8"
-      showSeparator
       showRelationshipBadges
     />
   </div>

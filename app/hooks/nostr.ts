@@ -37,6 +37,28 @@ import type { Pubkey } from "~/types";
 
 const MAX_SHARED_SECOND_HOP = 100;
 
+function getEventTimelineKey(event: NostrEvent) {
+  if (isReplaceableKind(event.kind)) {
+    const identifier = event.tags.find((tag) => tag[0] === "d")?.[1] || "";
+    return `${event.kind}:${event.pubkey}:${identifier}`;
+  }
+  return event.id;
+}
+
+function dedupeTimelineEvents(events: NostrEvent[]) {
+  const seen = new Set<string>();
+  const deduped: NostrEvent[] = [];
+
+  for (const event of events) {
+    const key = getEventTimelineKey(event);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(event);
+  }
+
+  return deduped;
+}
+
 export function useProfile(pubkey: string): ProfileContent | undefined {
   const relays = useRelays(pubkey);
   const eventStore = useEventStore();
@@ -281,7 +303,11 @@ export function useTimeline(
       //  });
       //}),
       map((items) =>
-        items.sort((a, b) => getArticlePublished(b) - getArticlePublished(a)),
+        dedupeTimelineEvents(
+          [...items].sort(
+            (a, b) => getArticlePublished(b) - getArticlePublished(a),
+          ),
+        ),
       ),
     );
   }, [id, filterKey]);

@@ -5,7 +5,21 @@ import { useRelays } from "~/hooks/nostr";
 import { blossomServerListLoader } from "~/services/loaders";
 import { BLOSSOM_SERVER_LIST_KIND } from "~/const";
 
-const DEFAULT_BLOSSOM_SERVER = "https://blossom.band";
+const DEFAULT_BLOSSOM_SERVERS = [
+  "https://blossom.band",
+  "https://blossom.primal.net",
+  "https://blossom.nostr.build",
+  "https://nostrmedia.com",
+  "https://blossom.azzamo.media",
+];
+
+function normalizeServer(server: string) {
+  return server.replace(/\/$/, "");
+}
+
+function dedupeServers(servers: string[]) {
+  return Array.from(new Set(servers.map(normalizeServer)));
+}
 
 /**
  * Hook to fetch the user's Blossom server list from kind:10063 events
@@ -24,21 +38,18 @@ export function useBlossomServers(pubkey?: string) {
     return eventStore.replaceable(BLOSSOM_SERVER_LIST_KIND, pubkey).pipe(
       map((event) => {
         if (!event) {
-          return [DEFAULT_BLOSSOM_SERVER];
+          return DEFAULT_BLOSSOM_SERVERS;
         }
 
         // Extract server tags: ["server", "https://..."]
         const serverTags = event.tags
           .filter((tag) => tag[0] === "server" && tag[1])
-          .map((tag) => tag[1].replace(/\/$/, "")); // Remove trailing slash
-
-        // Deduplicate servers
-        const uniqueServers = Array.from(new Set(serverTags));
+          .map((tag) => normalizeServer(tag[1])); // Remove trailing slash
 
         // Return servers or default if none found
-        return uniqueServers.length > 0
-          ? uniqueServers
-          : [DEFAULT_BLOSSOM_SERVER];
+        return serverTags.length > 0
+          ? dedupeServers(serverTags)
+          : DEFAULT_BLOSSOM_SERVERS;
       }),
     );
   }, [pubkey]);
@@ -56,10 +67,16 @@ export function useBlossomServers(pubkey?: string) {
     return () => subscription.unsubscribe();
   }, [pubkey, userRelays]);
 
+  const normalizedServers = servers || DEFAULT_BLOSSOM_SERVERS;
+
   return {
-    servers: servers || [DEFAULT_BLOSSOM_SERVER],
+    servers: normalizedServers,
     hasCustomServers:
-      servers && servers.length > 0 && servers[0] !== DEFAULT_BLOSSOM_SERVER,
+      !!servers &&
+      (normalizedServers.length !== DEFAULT_BLOSSOM_SERVERS.length ||
+        normalizedServers.some(
+          (server) => !DEFAULT_BLOSSOM_SERVERS.includes(server),
+        )),
     isLoading: !servers && !!pubkey,
   };
 }
