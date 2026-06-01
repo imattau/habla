@@ -9,3 +9,7 @@ DESIGN.md
 # React Router
 /.react-router/
 /build/
+
+cache.db
+cache.db-wal
+cache.db-shm
