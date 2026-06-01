@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { NostrEvent } from "nostr-tools";
 import { map } from "rxjs";
 import { type Filter, kinds } from "nostr-tools";
@@ -17,6 +17,7 @@ import {
   getZapPayment,
   getZapSender,
   getInboxes,
+  getContacts,
 } from "applesauce-core/helpers";
 import { EventZapsModel } from "applesauce-core/models/zaps";
 import { getRelayURLs } from "~/lib/url";
@@ -30,7 +31,7 @@ import { useEventStore } from "applesauce-react/hooks";
 import { eventLoader, addressLoader, profileLoader } from "~/services/loaders";
 import { getArticlePublished } from "applesauce-core/helpers";
 import { isReplaceableKind } from "nostr-tools/kinds";
-import { AGGREGATOR_RELAYS } from "~/const";
+import { AGGREGATOR_RELAYS, INDEX_RELAYS } from "~/const";
 import { ContactsModel, ProfileModel } from "applesauce-core/models";
 import type { Pubkey } from "~/types";
 
@@ -130,6 +131,57 @@ export function useContacts(pubkey: string): ProfilePointer[] | undefined {
   return contacts;
 }
 
+export function useMyCircleAuthors(pubkey?: string): {
+  authors: string[];
+  isLoading: boolean;
+} {
+  const directContacts = useTimeline(
+    `${pubkey || "anon"}-circle-direct`,
+    pubkey
+      ? {
+          kinds: [kinds.Contacts],
+          authors: [pubkey],
+        }
+      : { kinds: [kinds.Contacts], authors: [] },
+    INDEX_RELAYS,
+    { limit: 1 },
+  );
+
+  const followedPubkeys = useMemo(() => {
+    const contactsEvent = directContacts.timeline?.[0];
+    if (!contactsEvent) return [];
+    return getContacts(contactsEvent).map((contact) => contact.pubkey);
+  }, [directContacts.timeline]);
+
+  const followeesOfFollowees = useTimeline(
+    `${pubkey || "anon"}-circle-followees-${followedPubkeys.join(",")}`,
+    followedPubkeys.length > 0
+      ? {
+          kinds: [kinds.Contacts],
+          authors: followedPubkeys,
+        }
+      : { kinds: [kinds.Contacts], authors: [] },
+    INDEX_RELAYS,
+    { limit: followedPubkeys.length || 1 },
+  );
+
+  const authors = useMemo(() => {
+    const circle = new Set<string>(followedPubkeys);
+    for (const event of followeesOfFollowees.timeline || []) {
+      circle.add(event.pubkey);
+    }
+    if (pubkey) {
+      circle.delete(pubkey);
+    }
+    return [...circle];
+  }, [followedPubkeys, followeesOfFollowees.timeline, pubkey]);
+
+  return {
+    authors,
+    isLoading: directContacts.isLoading || followeesOfFollowees.isLoading,
+  };
+}
+
 export function useInboxRelays(pubkey: string): string[] {
   const eventStore = useEventStore();
   const relays = useObservableMemo(() => {
@@ -163,6 +215,7 @@ export function useTimeline(
   },
 ) {
   const { limit } = options;
+  const filterKey = JSON.stringify(filters);
   const eventStore = useEventStore();
   const [isLoading, setIsLoading] = useState(false);
 
@@ -184,7 +237,7 @@ export function useTimeline(
       },
     });
     return () => subscription.unsubscribe();
-  }, [id, relays.length]);
+  }, [id, relays.join(","), limit, filterKey]);
 
   const timeline = useObservableMemo(() => {
     return eventStore.timeline(filters, false).pipe(
@@ -198,7 +251,7 @@ export function useTimeline(
         items.sort((a, b) => getArticlePublished(b) - getArticlePublished(a)),
       ),
     );
-  }, [id]);
+  }, [id, filterKey]);
 
   const hasItems = timeline ? timeline.length > 0 : false;
   return { timeline, isLoading: hasItems ? false : isLoading };

@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { cn } from "~/lib/utils";
 import { Link } from "react-router";
 import { nip19 } from "nostr-tools";
-import { Avatar, Username } from "~/ui/nostr/user";
+import { Avatar, RelationshipIcon, Username, type UserRelationship } from "~/ui/nostr/user";
 import { useProfile, useRelays } from "~/hooks/nostr";
 import { INDEX_RELAYS } from "~/const";
 import { useUsers } from "~/nostr/queries";
@@ -34,6 +34,7 @@ function PureUserLink({
   nip05,
   profile,
   className,
+  relationship,
 }: {
   pubkey: string;
   relays?: string[];
@@ -44,6 +45,7 @@ function PureUserLink({
   nip05?: string;
   profile?: ProfileContent;
   className?: string;
+  relationship?: UserRelationship;
 }) {
   const relays = useRelays(pubkey);
   const link = useUserLink(pubkey, relays);
@@ -60,7 +62,8 @@ function PureUserLink({
           />
         </Link>
         <div className="flex flex-col gap-0">
-          <Link to={link}>
+        <Link to={link}>
+          <div className="flex flex-row items-center gap-1">
             <Username
               pubkey={pubkey}
               profile={profile}
@@ -69,10 +72,12 @@ function PureUserLink({
                 name,
               )}
             />
-          </Link>
-          {withNip05 && profile?.nip05 ? (
-            <Nip05 pubkey={pubkey} nip05={profile?.nip05} className={nip05} />
-          ) : null}
+            {relationship ? <RelationshipIcon relationship={relationship} /> : null}
+          </div>
+        </Link>
+        {withNip05 && profile?.nip05 ? (
+          <Nip05 pubkey={pubkey} nip05={profile?.nip05} className={nip05} />
+        ) : null}
         </div>
       </div>
     </div>
@@ -105,6 +110,7 @@ export default function UserLink({
   nip05?: string;
   profile?: ProfileContent;
   className?: string;
+  relationship?: UserRelationship;
 }) {
   return profile ? (
     <PureUserLink {...props} profile={profile} />

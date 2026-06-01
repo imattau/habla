@@ -18,6 +18,7 @@ import {
 } from "~/ui/dropdown-menu";
 import { RelayName, RelayIcon } from "./relay-link";
 import { useNavigate } from "react-router";
+import type { UserRelationship } from "./user";
 
 function Relays({ relays }: { relays: Set<string> }) {
   const navigate = useNavigate();
@@ -58,12 +59,14 @@ export default function NostrCard({
   className,
   noFooter,
   profile,
+  relationship,
 }: {
   event: NostrEvent;
   children: ReactNode;
   className?: string;
   noFooter?: boolean;
   profile?: ProfileContent;
+  relationship?: UserRelationship;
 }) {
   const relays = getSeenRelays(event);
   return (
@@ -75,6 +78,7 @@ export default function NostrCard({
           profile={profile}
           img="size-12 mr-2"
           name="font-sans text-xl"
+          relationship={relationship}
         />
         <span className="hidden sm:block font-sans text-sm font-light text-muted-foreground">
           <Timestamp timestamp={event.created_at} />

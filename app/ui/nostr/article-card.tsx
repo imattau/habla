@@ -11,6 +11,7 @@ import UserLink from "~/ui/nostr/user-link";
 import { Card, CardHeader, CardContent } from "~/ui/card";
 import { Tags } from "~/ui/tag";
 import ArticleLink from "./article-link";
+import type { UserRelationship } from "./user";
 
 function getHashtags(event: NostrEvent): string[] {
   // TODO: cache
@@ -58,11 +59,13 @@ export default function ArticleCard({
   noHeader,
   author,
   article,
+  relationship,
 }: {
   address: AddressPointer;
   noHeader?: boolean;
   author?: ProfileContent;
   article: NostrEvent;
+  relationship?: UserRelationship;
 }) {
   const title = getArticleTitle(article);
   if (!title) return null;
@@ -76,6 +79,7 @@ export default function ArticleCard({
               profile={author}
               img="size-10"
               name="text-2xl"
+              relationship={relationship}
             />
           </div>
         </CardHeader>

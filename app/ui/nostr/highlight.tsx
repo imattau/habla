@@ -18,17 +18,20 @@ import NEvent from "./nevent";
 import NEventLink from "./nevent-link";
 import UserLink from "./user-link";
 import RichText from "./rich-text";
+import type { UserRelationship } from "./user";
 
 export function PureHighlight({
   event,
   blockquote,
   link,
   footer,
+  relationship,
 }: {
   event: NostrEvent;
   blockquote?: string;
   link?: string;
   footer?: string;
+  relationship?: UserRelationship;
 }) {
   const comment = getHighlightComment(event);
   const url = getHighlightSourceUrl(event);
@@ -56,10 +59,20 @@ export function PureHighlight({
         ) : a ? (
           <div className="flex flex-col gap-1">
             <NAddr {...a} className="text-sm" />
-            <UserLink pubkey={a.pubkey} img="size-6" name="text-md" />
+            <UserLink
+              pubkey={a.pubkey}
+              img="size-6"
+              name="text-md"
+              relationship={relationship}
+            />
           </div>
         ) : p ? (
-          <UserLink pubkey={p.pubkey} img="size-6" name="text-md" />
+          <UserLink
+            pubkey={p.pubkey}
+            img="size-6"
+            name="text-md"
+            relationship={relationship}
+          />
         ) : e ? (
           <NEvent {...e} />
         ) : null}
@@ -72,11 +85,13 @@ export default function Highlight({
   event,
   noHeader,
   profile,
+  relationship,
   ...props
 }: {
   noHeader?: boolean;
   event: NostrEvent;
   profile?: ProfileContent;
+  relationship?: UserRelationship;
   blockquote?: string;
   link?: string;
   footer?: string;
@@ -85,10 +100,10 @@ export default function Highlight({
     <div className="flex flex-col gap-2 w-full">
       {noHeader ? null : (
         <div>
-          <User pubkey={event.pubkey} profile={profile} />
+          <User pubkey={event.pubkey} profile={profile} relationship={relationship} />
         </div>
       )}
-      <PureHighlight event={event} {...props} />
+      <PureHighlight event={event} relationship={relationship} {...props} />
     </div>
   );
 }

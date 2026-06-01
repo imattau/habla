@@ -19,6 +19,7 @@ import {
   Feather,
   HandHeart,
   Newspaper,
+  Users,
   Sparkles,
 } from "lucide-react";
 import { useNavigate } from "react-router";
@@ -104,6 +105,10 @@ function LoggedInUser({ pubkey }: { pubkey: string }) {
     navigate("/feed");
   }
 
+  function myCircle() {
+    navigate("/feed?view=circle");
+  }
+
   return (
     <>
       <div className="flex flex-row items-center gap-2 sm:gap-4">
@@ -125,6 +130,17 @@ function LoggedInUser({ pubkey }: { pubkey: string }) {
           >
             <Newspaper className="dark:text-foreground" />
             <span className="hidden sm:inline dark:text-foreground">Feed</span>
+          </Button>
+          <Button
+            aria-label="My Circle"
+            variant="secondary"
+            size="sm"
+            onClick={myCircle}
+          >
+            <Users className="dark:text-foreground" />
+            <span className="hidden sm:inline dark:text-foreground">
+              My Circle
+            </span>
           </Button>
           <Button
             aria-label="Write"

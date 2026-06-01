@@ -5,6 +5,31 @@ import {
   getProfilePicture,
 } from "applesauce-core/helpers";
 import { Loading } from "~/ui/nostr/nip05";
+import { UserCheck, Users } from "lucide-react";
+
+export type UserRelationship = "direct" | "circle";
+
+export function RelationshipIcon({
+  relationship,
+  className,
+}: {
+  relationship: UserRelationship;
+  className?: string;
+}) {
+  const title =
+    relationship === "direct"
+      ? "You directly follow this author"
+      : "This author is directly followed by someone you follow";
+  return relationship === "direct" ? (
+    <span aria-label={title} title={title} className="inline-flex">
+      <UserCheck className={cn("size-4 text-emerald-400", className)} />
+    </span>
+  ) : (
+    <span aria-label={title} title={title} className="inline-flex">
+      <Users className={cn("size-4 text-sky-400", className)} />
+    </span>
+  );
+}
 
 export function Username({
   pubkey,
@@ -54,6 +79,7 @@ export default function User({
   withNip05,
   nip05,
   onlyAvatar,
+  relationship,
 }: {
   pubkey: string;
   profile?: ProfileContent;
@@ -64,6 +90,7 @@ export default function User({
   withNip05?: boolean;
   nip05?: string;
   onlyAvatar?: boolean;
+  relationship?: UserRelationship;
 }) {
   const username = getDisplayName(profile) || pubkey.slice(0, 8);
   const picture = getProfilePicture(profile) || "/favicon.ico";
@@ -77,7 +104,12 @@ export default function User({
           {profile?.nip05 && withNip05 ? (
             <Loading nip05={profile?.nip05} className={nip05} />
           ) : null}
-          <Username pubkey={pubkey} profile={profile} className={name} />
+          <div className="flex flex-row items-center gap-1">
+            <Username pubkey={pubkey} profile={profile} className={name} />
+            {relationship ? (
+              <RelationshipIcon relationship={relationship} />
+            ) : null}
+          </div>
         </div>
       </div>
     </div>
