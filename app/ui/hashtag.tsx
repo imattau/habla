@@ -14,7 +14,6 @@ export function HashtagLink({
   const encodedTag = encodeURIComponent(hashtag);
   return (
     <Link
-      reloadDocument
       to={`/t/${encodedTag}`}
       className={cn(
         "text-primary hover:underline hover:decoration-dotted",
@@ -36,7 +35,6 @@ export default function Hashtags({
   const encodedTag = encodeURIComponent(hashtag);
   return (
     <Link
-      reloadDocument
       to={`/t/${encodedTag}`}
       className="text-primary hover:underline hover:decoration-dotted"
     >

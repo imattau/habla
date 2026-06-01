@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { firstValueFrom } from "rxjs";
 import { kinds } from "nostr-tools";
 import { getProfilePointersFromList, getTagValue } from "applesauce-core/helpers";
@@ -22,6 +22,7 @@ import { useMyCircleAuthors, useRelays, useTimeline } from "~/hooks/nostr";
 import { publishToRelays } from "~/services/publish-article";
 import {
   SyncMyCircle,
+  normalizeMyCircleAuthors,
   MY_CIRCLE_LIST_IDENTIFIER,
 } from "~/nostr/my-circle";
 
@@ -58,6 +59,11 @@ export function meta() {
 }
 
 type FeedView = "global" | "circle";
+type RefreshPhase = "idle" | "checking-updates" | "signing" | "publishing";
+type RefreshState = {
+  isRefreshing: boolean;
+  phase: RefreshPhase;
+};
 
 function FeedState({
   title,
@@ -65,14 +71,12 @@ function FeedState({
   actionLabel,
   onAction,
   actionDisabled,
-  actionLoading,
 }: {
   title: string;
   description: string;
   actionLabel?: string;
   onAction?: () => void;
   actionDisabled?: boolean;
-  actionLoading?: boolean;
 }) {
   return (
     <div className="rounded-lg border border-dotted border-muted-foreground/40 p-6 flex flex-col gap-4">
@@ -83,12 +87,26 @@ function FeedState({
       {onAction && actionLabel ? (
         <div>
           <Button type="button" onClick={onAction} disabled={actionDisabled}>
-            {actionLoading ? "Refreshing..." : actionLabel}
+            {actionLabel}
           </Button>
         </div>
       ) : null}
     </div>
   );
+}
+
+function summarizePublishFailures(
+  statuses: Array<{ relay: string; message?: string; status: string }>,
+) {
+  const failures = statuses.filter((status) => status.status === "error");
+  if (failures.length === 0) return "";
+  return failures
+    .map((status) =>
+      status.message
+        ? `${status.relay}: ${status.message}`
+        : status.relay,
+    )
+    .join("; ");
 }
 
 function GlobalFeedView() {
@@ -112,8 +130,16 @@ function CircleFeedView() {
   const hub = useActionHub();
   const eventStore = useEventStore();
   const relays = useRelays(account?.pubkey || "");
-  const circleGraph = useMyCircleAuthors(account?.pubkey);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [graphRefreshKey, setGraphRefreshKey] = useState(0);
+  const circleReadRelays = useMemo(() => {
+    const merged = [...relays, ...INDEX_RELAYS];
+    return [...new Set(merged)];
+  }, [relays]);
+  const circleGraph = useMyCircleAuthors(account?.pubkey, graphRefreshKey);
+  const [refreshState, setRefreshState] = useState<RefreshState>({
+    isRefreshing: false,
+    phase: "idle",
+  });
 
   const circleListTimeline = useTimeline(
     `${account?.pubkey || "anon"}-${MY_CIRCLE_LIST_IDENTIFIER}`,
@@ -122,7 +148,7 @@ function CircleFeedView() {
       authors: account?.pubkey ? [account.pubkey] : [],
       "#d": [MY_CIRCLE_LIST_IDENTIFIER],
     },
-    INDEX_RELAYS,
+    circleReadRelays,
     { limit: 1 },
   );
 
@@ -135,17 +161,12 @@ function CircleFeedView() {
       ),
     )]
       .filter(Boolean)
-      .filter((pubkey) => pubkey !== account?.pubkey);
+      .filter((pubkey) => pubkey !== account?.pubkey)
+      .sort();
   }, [account?.pubkey, circleList]);
 
   async function refreshCircle() {
     if (!account) return;
-    if (circleGraph.isLoading) {
-      toast.info("Still loading your follow graph", {
-        description: "Try refreshing My Circle again in a moment.",
-      });
-      return;
-    }
     if (relays.length === 0) {
       toast.error("No publish relays available", {
         description: "Add relays to your profile before refreshing My Circle.",
@@ -153,10 +174,34 @@ function CircleFeedView() {
       return;
     }
 
-    setIsRefreshing(true);
+    setRefreshState({ isRefreshing: true, phase: "checking-updates" });
+    setGraphRefreshKey((current) => current + 1);
+
+    const pubkey = account.pubkey;
+    const startedAt = Date.now();
+    const timeoutMs = 30_000;
+
     try {
+      while (true) {
+        if (!circleGraph.isLoading) break;
+        if (Date.now() - startedAt >= timeoutMs) {
+          throw new Error("My Circle graph is still loading. Try again in a moment.");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+
+      setRefreshState({ isRefreshing: true, phase: "signing" });
+      const circleAuthorsToPublish = normalizeMyCircleAuthors(
+        circleGraph.authors,
+        pubkey,
+      );
+
+      if (circleAuthorsToPublish.length === 0) {
+        throw new Error("My Circle is empty");
+      }
+
       const signedEvent = await firstValueFrom(
-        hub.exec(SyncMyCircle, circleGraph.authors),
+        hub.exec(SyncMyCircle, circleAuthorsToPublish),
       );
 
       if (!signedEvent) {
@@ -165,9 +210,15 @@ function CircleFeedView() {
 
       eventStore.add(signedEvent);
 
+      setRefreshState({ isRefreshing: true, phase: "publishing" });
       const publishResult = await publishToRelays(signedEvent, relays);
       if (publishResult.successCount === 0) {
-        throw new Error("Failed to publish My Circle list");
+        const failureSummary = summarizePublishFailures(publishResult.statuses);
+        throw new Error(
+          failureSummary
+            ? `Failed to publish My Circle list: ${failureSummary}`
+            : "Failed to publish My Circle list",
+        );
       }
 
       toast.success("My Circle refreshed");
@@ -178,15 +229,28 @@ function CircleFeedView() {
           error instanceof Error ? error.message : "Please try again",
       });
     } finally {
-      setIsRefreshing(false);
+      setRefreshState({ isRefreshing: false, phase: "idle" });
     }
   }
+
+  const refreshButtonLabel = (() => {
+    switch (refreshState.phase) {
+      case "checking-updates":
+        return "Checking for updates...";
+      case "signing":
+        return "Preparing My Circle...";
+      case "publishing":
+        return "Publishing...";
+      default:
+        return "Refresh My Circle";
+    }
+  })();
 
   if (!account) {
     return (
       <FeedState
         title="Log in to use My Circle"
-        description="My Circle is built from the people you follow and the people they directly follow."
+        description="My Circle is built from the people you follow and a selected set of accounts followed by more than one of them."
       />
     );
   }
@@ -196,10 +260,9 @@ function CircleFeedView() {
       <FeedState
         title="Loading My Circle"
         description="Checking for your published My Circle list."
-        actionLabel="Refresh My Circle"
+        actionLabel={refreshButtonLabel}
         onAction={refreshCircle}
-        actionDisabled={isRefreshing || circleGraph.isLoading}
-        actionLoading={isRefreshing}
+        actionDisabled={refreshState.isRefreshing}
       />
     );
   }
@@ -209,10 +272,9 @@ function CircleFeedView() {
       <FeedState
         title="My Circle is empty"
         description="Refresh the list after you follow a few people, or after the people you follow change who they follow."
-        actionLabel="Refresh My Circle"
+        actionLabel={refreshButtonLabel}
         onAction={refreshCircle}
-        actionDisabled={isRefreshing || circleGraph.isLoading}
-        actionLoading={isRefreshing}
+        actionDisabled={refreshState.isRefreshing}
       />
     );
   }
@@ -224,14 +286,14 @@ function CircleFeedView() {
           type="button"
           variant="outline"
           onClick={refreshCircle}
-          disabled={isRefreshing || circleGraph.isLoading}
+          disabled={refreshState.isRefreshing}
         >
-          {isRefreshing ? "Refreshing..." : "Refresh My Circle"}
+          {refreshButtonLabel}
         </Button>
       </div>
       <Feed
         id={`${account.pubkey}-${circleList?.id || MY_CIRCLE_LIST_IDENTIFIER}`}
-        relays={INDEX_RELAYS}
+        relays={circleReadRelays}
         filters={{
           authors: circleAuthors,
           kinds: [kinds.LongFormArticle, kinds.Highlights],
@@ -259,7 +321,7 @@ function FeedPage() {
         </h1>
         <p className="text-muted-foreground">
           {view === "circle"
-            ? "People you follow, plus the people they directly follow."
+            ? "People you follow, plus a selected set of accounts followed by more than one of them."
             : "Recent articles and highlights across Habla."}
         </p>
       </div>

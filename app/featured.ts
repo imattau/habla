@@ -719,72 +719,6 @@ const articles = [
   },
 ];
 
-const highlights = [
-  {
-    kind: 9802,
-    id: "b85d66dfe36a459abb0f9606e8c3806ebbe56372d364f1caaa39b0cdaad94693",
-    pubkey: "a9434ee165ed01b286becfc2771ef1705d3537d051b387288898cc00d5c885be",
-    created_at: 1711014451,
-    tags: [
-      [
-        "context",
-        'The point is that nostr provides an easy way to publish your own "websites", a nice way to find them, and a great way to populate them with data (notes, longforms, profiles) and interactivity (forms that create more events, like notes on a guestbook page for instance).',
-      ],
-      ["r", "https://github.com/futurepaul/hypernote/"],
-      [
-        "client",
-        "highlighter",
-        "31990:73c6bb92440a9344279f7a36aa3de1710c9198b1e9e8a394cd13e0dd5c994c63:1704502265408",
-      ],
-    ],
-    content:
-      'The point is that nostr provides an easy way to publish your own "websites", a nice way to find them, and a great way to populate them with data (notes, longforms, profiles) and interactivity (forms that create more events, like notes on a guestbook page for instance).',
-    sig: "0d2af7b5a88e20732aec88bf80792bcd5aecebbaed701419b211db2b3e3f846ac6545a529409ad45ddb77dc07316651f7da3e82083982d3b83985cad94a13b81",
-  },
-  {
-    content: "Let's fix the web",
-    created_at: 1755614318,
-    id: "f8b3402c65721ef46ac63ed1607456f4e067af2c801b556824266b64939d0a13",
-    kind: 9802,
-    pubkey: "9be0be0e64d38a29a9cec9a5c8ef5d873c2bfa5362a4b558da5ff69bc3cbb81e",
-    sig: "74439f80b975b74295d27cdc40df0cbd3fe3b5290203f8f117275ab54f633794e1caed1a21463e7f711cfde6462e26d2aeb6b7a171deed5c5457dbd6d8b2309a",
-    tags: [
-      ["r", "https://nostrver.se/"],
-      ["p", "06639a386c9c1014217622ccbcf40908c4f1a0c33e23f8d6d68f4abf655f8f71"],
-      [
-        "client",
-        "Nostur",
-        "31990:9be0be0fc079548233231614e4e1efc9f28b0db398011efeecf05fe570e5dd33:1685868693432",
-      ],
-      ["comment", ""],
-    ],
-  },
-  {
-    tags: [
-      [
-        "r",
-        "https://mail.bigdeskenergy.com/p/substack-just-killed-creator-economy?utm_source=orbitaloperations.beehiiv.com&utm_medium=newsletter&utm_campaign=summer-s-shadow",
-      ],
-      [
-        "client",
-        "Nostur",
-        "31990:9be0be0fc079548233231614e4e1efc9f28b0db398011efeecf05fe570e5dd33:1685868693432",
-      ],
-      [
-        "comment",
-        "Damn\n\nhttps://mail.bigdeskenergy.com/p/substack-just-killed-creator-economy",
-      ],
-    ],
-    pubkey: "06639a386c9c1014217622ccbcf40908c4f1a0c33e23f8d6d68f4abf655f8f71",
-    sig: "0a265c5a625d9b8647417689bd015f48de2df3c4b866db62cf1f213d80892c30b2b77f97e45fd01046e04be28be574015e132e0b63261de7bb7024fa40b32339",
-    content:
-      "Substack writers just saw their prices inflated 30% on iOS. \nWriters now have to wait 45 days to receive payment from Apple. \nWriters had absolutely no say in the decision, despite the very real consequences for their business. \nThe feature cannot be disabled or toggled off. ",
-    created_at: 1756706074,
-    id: "071c3b34369259215447d4f40c080fb0e51c973bb9eeb85c97e4b22d98592a58",
-    kind: 9802,
-  },
-];
-
 export async function getFeaturedArticles(): Promise<NostrEvent[]> {
   return (articles as NostrEvent[]).sort(
     (a, b) => getArticlePublished(b) - getArticlePublished(a),
@@ -858,10 +792,4 @@ export async function getArticlesByCategory(): Promise<{
   }
 
   return categorized;
-}
-
-export async function getFeaturedHighlights(): Promise<NostrEvent[]> {
-  return (highlights as NostrEvent[]).sort(
-    (a, b) => getArticlePublished(b) - getArticlePublished(a),
-  );
 }

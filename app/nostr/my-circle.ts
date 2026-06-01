@@ -1,47 +1,31 @@
 import { kinds } from "nostr-tools";
-import { List, TagOperations, modifyPublicTags } from "applesauce-factory/operations";
 
 const MY_CIRCLE_IDENTIFIER = "my-circle";
 const MY_CIRCLE_TITLE = "My Circle";
 const MY_CIRCLE_DESCRIPTION =
-  "People you follow and the followers of those people.";
+  "People you follow and a selected set of accounts followed by more than one of them.";
 
-function replaceAllPubkeys(tags: string[][]) {
-  return tags.filter((tag) => tag[0] !== "p");
+export function normalizeMyCircleAuthors(authors: string[], self?: string) {
+  return [...new Set(authors)]
+    .filter((pubkey) => pubkey && pubkey !== self)
+    .sort();
 }
 
 export function SyncMyCircle(authors: string[]) {
-  return async function* ({ events, factory, self }: any) {
-    const uniqueAuthors = [...new Set(authors)].filter(
-      (pubkey) => pubkey && pubkey !== self,
-    );
-    const existing = events.getReplaceable(
-      kinds.Followsets,
-      self,
-      MY_CIRCLE_IDENTIFIER,
-    );
+  return async function* ({ factory, self }: any) {
+    const uniqueAuthors = normalizeMyCircleAuthors(authors, self);
 
-    const listTags = modifyPublicTags(
-      replaceAllPubkeys,
-      ...uniqueAuthors.map((pubkey) => TagOperations.addPubkeyTag(pubkey)),
+    const draft = await factory.build(
+      {
+        kind: kinds.Followsets,
+        tags: [
+          ["d", MY_CIRCLE_IDENTIFIER],
+          ["title", MY_CIRCLE_TITLE],
+          ["description", MY_CIRCLE_DESCRIPTION],
+          ...uniqueAuthors.map((pubkey) => ["p", pubkey]),
+        ],
+      }
     );
-
-    const draft = existing
-      ? await factory.modify(
-          existing,
-          List.setTitle(MY_CIRCLE_TITLE),
-          List.setDescription(MY_CIRCLE_DESCRIPTION),
-          listTags,
-        )
-      : await factory.build(
-          {
-            kind: kinds.Followsets,
-            tags: [["d", MY_CIRCLE_IDENTIFIER]],
-          },
-          List.setTitle(MY_CIRCLE_TITLE),
-          List.setDescription(MY_CIRCLE_DESCRIPTION),
-          listTags,
-        );
 
     yield await factory.sign(draft);
   };

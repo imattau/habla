@@ -21,6 +21,7 @@ export default [
     route("/t/:tag", "./routes/hashtag.tsx"),
     //route("/r/:ref", "./routes/ref.tsx"),
     route("/relay/:relay", "./routes/relay.tsx"),
+    route("/tags", "./routes/tags.tsx"),
     route("/feed", "./routes/feed.tsx"),
 
     route(":username", "./routes/username.tsx"),

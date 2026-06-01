@@ -181,6 +181,7 @@ const PROFILE_KEY_PREFIX = "profile";
 const EVENT_KEY_PREFIX = "event";
 const ADDRESS_KEY_PREFIX = "address";
 const ARTICLES_KEY_PREFIX = "articles";
+const HIGHLIGHTS_KEY_PREFIX = "highlights";
 const NIP05_NAMES = "nip05:names";
 const NIP05_RELAYS = "nip05:relays";
 
@@ -202,6 +203,10 @@ function addressKey(pointer: AddressPointer): string {
 
 function articlesKey(pubkey: Pubkey): string {
   return `${ARTICLES_KEY_PREFIX}:${pubkey}`;
+}
+
+function highlightsKey(limit: number): string {
+  return `${HIGHLIGHTS_KEY_PREFIX}:${limit}`;
 }
 
 // ============================================================================
@@ -711,6 +716,18 @@ function fetchNostrArticlesByTag(
   );
 }
 
+function fetchNostrHighlights(limit: number = 12) {
+  return lastValueFrom(
+    pool
+      .req(uniqueRelays(AGGREGATOR_RELAYS), {
+        kinds: [kinds.Highlights],
+        limit,
+      })
+      .pipe(timeout(10_000), completeOnEose(), toArray()),
+    { defaultValue: [] },
+  );
+}
+
 export async function fetchArticlesByTag(
   tag: string,
   limit: number = 50,
@@ -725,6 +742,19 @@ export async function fetchArticlesByTag(
   cacheValue(cacheKey, articles, 300);
 
   return articles;
+}
+
+export async function fetchHighlights(limit: number = 12): Promise<NostrEvent[]> {
+  const cacheKey = highlightsKey(limit);
+  const cached = getCachedValue<NostrEvent[]>(cacheKey);
+  if (cached) return cached;
+
+  const highlights = (await fetchNostrHighlights(limit)).sort(
+    (a, b) => b.created_at - a.created_at,
+  );
+  cacheValue(cacheKey, highlights, 300);
+
+  return highlights;
 }
 
 // Loader API
@@ -775,6 +805,7 @@ export async function fetchEvent(pointer: EventPointer) {
 const store: DataStore = {
   getMembers,
   getUsers,
+  fetchHighlights,
   fetchRelays,
   fetchProfile,
   fetchAddress,

@@ -35,6 +35,8 @@ import { AGGREGATOR_RELAYS, INDEX_RELAYS } from "~/const";
 import { ContactsModel, ProfileModel } from "applesauce-core/models";
 import type { Pubkey } from "~/types";
 
+const MAX_SHARED_SECOND_HOP = 100;
+
 export function useProfile(pubkey: string): ProfileContent | undefined {
   const relays = useRelays(pubkey);
   const eventStore = useEventStore();
@@ -131,49 +133,80 @@ export function useContacts(pubkey: string): ProfilePointer[] | undefined {
   return contacts;
 }
 
-export function useMyCircleAuthors(pubkey?: string): {
+export function useMyCircleAuthors(pubkey?: string, refreshKey?: number): {
   authors: string[];
   isLoading: boolean;
 } {
+  const userRelays = useRelays(pubkey || "");
+  const readRelays = useMemo(() => {
+    const relays = [...userRelays, ...INDEX_RELAYS];
+    return [...new Set(relays)];
+  }, [userRelays]);
+
   const directContacts = useTimeline(
-    `${pubkey || "anon"}-circle-direct`,
+    `${pubkey || "anon"}-circle-direct-${refreshKey || 0}`,
     pubkey
       ? {
           kinds: [kinds.Contacts],
           authors: [pubkey],
         }
       : { kinds: [kinds.Contacts], authors: [] },
-    INDEX_RELAYS,
+    readRelays,
     { limit: 1 },
   );
 
   const followedPubkeys = useMemo(() => {
     const contactsEvent = directContacts.timeline?.[0];
     if (!contactsEvent) return [];
-    return getContacts(contactsEvent).map((contact) => contact.pubkey);
+    return [...new Set(getContacts(contactsEvent).map((contact) => contact.pubkey))];
   }, [directContacts.timeline]);
 
   const followeesOfFollowees = useTimeline(
-    `${pubkey || "anon"}-circle-followees-${followedPubkeys.join(",")}`,
+    `${pubkey || "anon"}-circle-followees-${followedPubkeys.join(",")}-${refreshKey || 0}`,
     followedPubkeys.length > 0
       ? {
           kinds: [kinds.Contacts],
           authors: followedPubkeys,
         }
       : { kinds: [kinds.Contacts], authors: [] },
-    INDEX_RELAYS,
+    readRelays,
     { limit: followedPubkeys.length || 1 },
   );
 
   const authors = useMemo(() => {
     const circle = new Set<string>(followedPubkeys);
+    const followeeEventsByPubkey = new Map<string, NostrEvent>();
+
     for (const event of followeesOfFollowees.timeline || []) {
-      circle.add(event.pubkey);
+      const current = followeeEventsByPubkey.get(event.pubkey);
+      if (!current || event.created_at > current.created_at) {
+        followeeEventsByPubkey.set(event.pubkey, event);
+      }
+    }
+
+    const secondHopCounts = new Map<string, number>();
+    for (const event of followeeEventsByPubkey.values()) {
+      const seenContacts = new Set<string>();
+      for (const contact of getContacts(event)) {
+        if (seenContacts.has(contact.pubkey)) continue;
+        seenContacts.add(contact.pubkey);
+        secondHopCounts.set(contact.pubkey, (secondHopCounts.get(contact.pubkey) || 0) + 1);
+      }
+    }
+
+    const sharedSecondHopAuthors = [...secondHopCounts.entries()]
+      .filter(([, count]) => count > 1)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, MAX_SHARED_SECOND_HOP)
+      .map(([pubkey]) => pubkey);
+
+    for (const pubkey of sharedSecondHopAuthors) {
+      circle.add(pubkey);
     }
     if (pubkey) {
       circle.delete(pubkey);
     }
-    return [...circle];
+    return [...circle].sort();
   }, [followedPubkeys, followeesOfFollowees.timeline, pubkey]);
 
   return {

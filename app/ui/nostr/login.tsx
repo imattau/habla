@@ -20,6 +20,7 @@ import {
   HandHeart,
   Newspaper,
   Users,
+  Tags,
   Sparkles,
 } from "lucide-react";
 import { useNavigate } from "react-router";
@@ -109,6 +110,10 @@ function LoggedInUser({ pubkey }: { pubkey: string }) {
     navigate("/feed?view=circle");
   }
 
+  function tags() {
+    navigate("/tags");
+  }
+
   return (
     <>
       <div className="flex flex-row items-center gap-2 sm:gap-4">
@@ -141,6 +146,15 @@ function LoggedInUser({ pubkey }: { pubkey: string }) {
             <span className="hidden sm:inline dark:text-foreground">
               My Circle
             </span>
+          </Button>
+          <Button
+            aria-label="Tags"
+            variant="secondary"
+            size="sm"
+            onClick={tags}
+          >
+            <Tags className="dark:text-foreground" />
+            <span className="hidden sm:inline dark:text-foreground">Tags</span>
           </Button>
           <Button
             aria-label="Write"

@@ -1,4 +1,4 @@
-import { firstValueFrom } from "rxjs";
+import { firstValueFrom, lastValueFrom, toArray, timeout } from "rxjs";
 import type { NostrEvent } from "nostr-tools";
 import { kinds } from "nostr-tools";
 import type {
@@ -13,6 +13,9 @@ import { type DataStore } from "./types";
 import { getUsers, getMembers } from "~/lib/api";
 import type { Pubkey, Relay } from "~/types";
 import { getRelayURLs } from "~/lib/url";
+import { AGGREGATOR_RELAYS } from "~/const";
+import { completeOnEose } from "applesauce-relay/operators";
+import pool from "~/services/relay-pool";
 
 function fetchProfile(
   pointer: ProfilePointer,
@@ -38,9 +41,22 @@ function fetchAddress(
   return firstValueFrom(addressLoader(pointer));
 }
 
+function fetchHighlights(limit: number = 12): Promise<NostrEvent[]> {
+  return lastValueFrom(
+    pool
+      .req(AGGREGATOR_RELAYS, {
+        kinds: [kinds.Highlights],
+        limit,
+      })
+      .pipe(timeout(10_000), completeOnEose(), toArray()),
+    { defaultValue: [] },
+  ).then((highlights) => highlights.sort((a, b) => b.created_at - a.created_at));
+}
+
 const store: DataStore = {
   getMembers,
   getUsers,
+  fetchHighlights,
   fetchRelays,
   fetchProfile,
   fetchEvent,
