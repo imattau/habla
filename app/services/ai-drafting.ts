@@ -57,6 +57,9 @@ export interface AvailableModel {
 type AIDraftingSettingsEnvelope = {
   version: 1;
   settings: AIDraftingSettings;
+  theme?: "light" | "dark" | "system";
+  currency?: "USD" | "EUR";
+  wallet?: any;
   updatedAt: number;
 };
 
@@ -137,9 +140,17 @@ function getEncryptionMethods(account: EncryptedSigner) {
 function getDefaultEnvelope(
   settings: AIDraftingSettings = getDefaultAIDraftingSettings(),
 ): AIDraftingSettingsEnvelope {
+  const theme = typeof window !== "undefined" ? (window.localStorage.getItem("habla-theme") as any) : null;
+  const currency = typeof window !== "undefined" ? (window.localStorage.getItem("fiat-currency") as any) : null;
+  const walletRaw = typeof window !== "undefined" ? window.localStorage.getItem("wallet") : null;
+  const wallet = walletRaw ? safeParse(walletRaw) : null;
+
   return {
     version: 1,
     settings,
+    theme: theme || undefined,
+    currency: currency || undefined,
+    wallet: wallet || undefined,
     updatedAt: Date.now(),
   };
 }
@@ -248,6 +259,31 @@ async function decryptSettingsEvent(
         parsed.version === 1 &&
         parsed.settings
       ) {
+        if (parsed.theme && typeof window !== "undefined") {
+          window.localStorage.setItem("habla-theme", parsed.theme);
+          if (typeof StorageEvent !== "undefined") {
+            window.dispatchEvent(
+              new StorageEvent("storage", { key: "habla-theme", newValue: parsed.theme }),
+            );
+          }
+        }
+        if (parsed.currency && typeof window !== "undefined") {
+          window.localStorage.setItem("fiat-currency", parsed.currency);
+          if (typeof StorageEvent !== "undefined") {
+            window.dispatchEvent(
+              new StorageEvent("storage", { key: "fiat-currency", newValue: parsed.currency }),
+            );
+          }
+        }
+        if (parsed.wallet && typeof window !== "undefined") {
+          window.localStorage.setItem("wallet", JSON.stringify(parsed.wallet));
+          if (typeof StorageEvent !== "undefined") {
+            window.dispatchEvent(
+              new StorageEvent("storage", { key: "wallet", newValue: JSON.stringify(parsed.wallet) }),
+            );
+          }
+        }
+
         return normalizeAIDraftingSettings(parsed.settings);
       }
     } catch (error) {
@@ -352,6 +388,13 @@ export async function saveAIDraftingSettings(
   storeCachedSettings(account.pubkey, normalized);
 }
 
+export async function syncLocalSettingsToProfile(
+  account: EncryptedSigner,
+): Promise<void> {
+  const settings = loadAIDraftingSettings(account.pubkey);
+  await saveAIDraftingSettings(account, settings);
+}
+
 export async function clearAIDraftingSettings(
   account: EncryptedSigner,
 ): Promise<void> {
@@ -361,6 +404,7 @@ export async function clearAIDraftingSettings(
   saveEncryptedSettingsEvent(account.pubkey, event);
   storeCachedSettings(account.pubkey, defaults);
 }
+
 
 function providerEndpoint(provider: AIProvider): string {
   return provider === "groq"

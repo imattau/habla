@@ -1,4 +1,6 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import accountManager from "~/services/accounts";
+import { syncLocalSettingsToProfile } from "~/services/ai-drafting";
 
 type Theme = "dark" | "light" | "system";
 
@@ -54,11 +56,28 @@ export function ThemeProvider({
     root.style.colorScheme = resolvedTheme;
   }, [theme]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === storageKey && e.newValue) {
+        setTheme(e.newValue as Theme);
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [storageKey]);
+
   const value = {
     theme,
     setTheme: (theme: Theme) => {
       if (typeof window !== "undefined") {
         localStorage.setItem(storageKey, theme);
+        const active = accountManager.active;
+        if (active) {
+          syncLocalSettingsToProfile(active).catch((err) =>
+            console.error("[theme] Failed to sync settings:", err),
+          );
+        }
       }
       setTheme(theme);
     },

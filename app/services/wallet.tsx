@@ -1,5 +1,7 @@
-import { useState, createContext, useContext, type ReactNode } from "react";
+import { useState, createContext, useContext, useEffect, type ReactNode } from "react";
 import { type NostrEvent } from "nostr-tools";
+import accountManager from "./accounts";
+import { syncLocalSettingsToProfile } from "./ai-drafting";
 import { WalletConnect } from "applesauce-wallet-connect";
 import { useQuery } from "@tanstack/react-query";
 import pool from "./relay-pool";
@@ -45,6 +47,24 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   });
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === WALLET) {
+        if (e.newValue) {
+          const json = safeParse(e.newValue);
+          if (json) {
+            setWallet(WalletConnect.fromJSON(json));
+          }
+        } else {
+          setWallet(undefined);
+        }
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
   function changeWallet(w?: WalletConnect) {
     if (typeof window !== "undefined") {
       if (w) {
@@ -54,6 +74,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       } else {
         localStorage.removeItem(WALLET);
         setWallet(undefined);
+      }
+
+      const active = accountManager.active;
+      if (active) {
+        syncLocalSettingsToProfile(active).catch((err) =>
+          console.error("[wallet] Failed to sync settings:", err),
+        );
       }
     }
   }

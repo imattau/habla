@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
+import accountManager from "~/services/accounts";
+import { syncLocalSettingsToProfile } from "~/services/ai-drafting";
 
 export type Currency = "EUR" | "USD";
 
@@ -16,6 +18,13 @@ function setCurrency(newValue?: Currency) {
   window.dispatchEvent(
     new StorageEvent("storage", { key: FIAT_CURRENCY, newValue }),
   );
+
+  const active = accountManager.active;
+  if (active) {
+    syncLocalSettingsToProfile(active).catch((err) =>
+      console.error("[currency] Failed to sync settings:", err),
+    );
+  }
 }
 
 const store = {

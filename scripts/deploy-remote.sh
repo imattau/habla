@@ -16,6 +16,15 @@ DRY_RUN=false
 SKIP_BUILD=false
 SSH_TARGET=""
 SSH_CONTROL_PATH="${TMPDIR:-/tmp}/habla-ssh-%C"
+REMOTE_STAGE_DIR="/tmp/${SERVICE_NAME}-deploy"
+TOTAL_STEPS=3
+CURRENT_STEP=0
+CURRENT_STEP_LABEL=""
+TTY_AVAILABLE=false
+USE_COLOR=false
+SPINNER_PID=""
+SPINNER_LABEL=""
+SPINNER_RUNNING=false
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REMOTE_SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
@@ -31,6 +40,151 @@ warn() {
 die() {
 	printf '[deploy] error: %s\n' "$*" >&2
 	exit 1
+}
+
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+	USE_COLOR=true
+fi
+
+if [[ "$USE_COLOR" == true ]]; then
+	C_RESET=$'\033[0m'
+	C_BOLD=$'\033[1m'
+	C_DIM=$'\033[2m'
+	C_RED=$'\033[31m'
+	C_GREEN=$'\033[32m'
+	C_YELLOW=$'\033[33m'
+	C_BLUE=$'\033[34m'
+	C_CYAN=$'\033[36m'
+else
+	C_RESET=''
+	C_BOLD=''
+	C_DIM=''
+	C_RED=''
+	C_GREEN=''
+	C_YELLOW=''
+	C_BLUE=''
+	C_CYAN=''
+fi
+
+paint() {
+	local color="$1"
+	shift
+	printf '%s%s%s' "$color" "$*" "$C_RESET"
+}
+
+status_good() { paint "$C_GREEN" "$*"; }
+status_bad() { paint "$C_RED" "$*"; }
+status_warn() { paint "$C_YELLOW" "$*"; }
+status_info() { paint "$C_CYAN" "$*"; }
+
+hr() {
+	local width="${1:-72}"
+	printf '%*s\n' "$width" '' | tr ' ' '-'
+}
+
+panel_line() {
+	local text="$1"
+	printf '| %-*s |\n' 68 "${text:0:68}"
+}
+
+render_header() {
+	local proxy_display="$PROXY_MODE"
+	if [[ "$PROXY_MODE" == "auto" && -n "$proxy_mode_resolved" ]]; then
+		proxy_display="auto -> ${proxy_mode_resolved}"
+	fi
+
+	printf '\n'
+	hr
+	panel_line "$(status_info "habla deploy installer")"
+	hr
+	panel_line "target   : ${SSH_TARGET}"
+	panel_line "install  : ${INSTALL_DIR}"
+	panel_line "data     : ${DATA_DIR}"
+	panel_line "service  : ${SERVICE_NAME}"
+	panel_line "port     : ${PORT}"
+	panel_line "proxy    : ${proxy_display}"
+	panel_line "domain   : ${DOMAIN:-<none>}"
+	panel_line "build    : $([[ "$SKIP_BUILD" == true ]] && printf 'skip local build' || printf 'npm ci + npm run build')"
+	panel_line "tty      : $([[ "$TTY_AVAILABLE" == true ]] && printf 'interactive' || printf 'non-interactive')"
+	hr
+	printf '\n'
+}
+
+spinner_start() {
+	local label="$1"
+	SPINNER_LABEL="$label"
+	SPINNER_RUNNING=true
+	if [[ "$USE_COLOR" != true ]]; then
+		return 0
+	fi
+
+	(
+		local frames=('|' '/' '-' '\\')
+		local i=0
+		while :; do
+			printf '\r%s %s' "$(status_info "${frames[i % 4]}")" "$SPINNER_LABEL" >&2
+			i=$((i + 1))
+			sleep 0.1
+		done
+	) &
+	SPINNER_PID=$!
+}
+
+spinner_stop() {
+	local result="${1:-0}"
+	SPINNER_RUNNING=false
+	if [[ -n "$SPINNER_PID" ]]; then
+		kill "$SPINNER_PID" 2>/dev/null || true
+		wait "$SPINNER_PID" 2>/dev/null || true
+		SPINNER_PID=""
+	fi
+	if [[ "$USE_COLOR" == true ]]; then
+		printf '\r%*s\r' 120 '' >&2
+	fi
+	if [[ "$result" == 0 ]]; then
+		printf '%s %s\n' "$(status_good '[ok]')" "$SPINNER_LABEL"
+	else
+		printf '%s %s\n' "$(status_bad '[fail]')" "$SPINNER_LABEL"
+	fi
+	SPINNER_LABEL=""
+}
+
+run_spinner() {
+	local label="$1"
+	shift
+	if [[ "$USE_COLOR" != true ]]; then
+		"$@"
+		return
+	fi
+
+	spinner_start "$label"
+	if "$@"; then
+		spinner_stop 0
+	else
+		local rc=$?
+		spinner_stop "$rc"
+		return "$rc"
+	fi
+}
+
+step_begin() {
+	CURRENT_STEP=$((CURRENT_STEP + 1))
+	CURRENT_STEP_LABEL="$1"
+	printf '\n%s [%d/%d] %s\n' "$(status_info '>>>')" "$CURRENT_STEP" "$TOTAL_STEPS" "$CURRENT_STEP_LABEL"
+}
+
+step_done() {
+	printf '%s [%d/%d] %s\n' "$(status_good '[ok]')" "$CURRENT_STEP" "$TOTAL_STEPS" "$CURRENT_STEP_LABEL"
+	CURRENT_STEP_LABEL=""
+}
+
+on_error() {
+	local exit_code="$1"
+	local line_no="$2"
+	if [[ -n "$CURRENT_STEP_LABEL" ]]; then
+		printf '\n%s [%d/%d] %s\n' "$(status_bad '[fail]')" "$CURRENT_STEP" "$TOTAL_STEPS" "$CURRENT_STEP_LABEL" >&2
+	fi
+	printf '%s command failed at line %s (exit %s)\n' "$(status_bad '[deploy] error:')" "$line_no" "$exit_code" >&2
 }
 
 usage() {
@@ -67,15 +221,6 @@ is_true() {
 	esac
 }
 
-ssh_common_opts() {
-	printf '%s\0' \
-		-o "ControlMaster=auto" \
-		-o "ControlPersist=10m" \
-		-o "ControlPath=${SSH_CONTROL_PATH}" \
-		-o "ServerAliveInterval=30" \
-		-o "ServerAliveCountMax=3"
-}
-
 run_local() {
 	if [[ "$DRY_RUN" == true ]]; then
 		printf '[dry-run] '
@@ -98,54 +243,41 @@ open_ssh_master() {
 		"$SSH_TARGET"
 }
 
-ssh_cmd() {
-	ssh -p "$SSH_PORT" \
-		-o "ControlMaster=auto" \
-		-o "ControlPersist=10m" \
-		-o "ControlPath=${SSH_CONTROL_PATH}" \
-		"$@"
-}
-
-run_remote() {
-	local script="$1"
-	shift || true
-	local remote_args
-	printf -v remote_args '%q %q %q %q %q %q %q %q %q' \
-		"$INSTALL_DIR" "$DATA_DIR" "$SERVICE_NAME" "$SERVICE_USER" "$SERVICE_GROUP" "$PORT" "$PROXY_MODE" "$DOMAIN" "$CADDY_EMAIL"
-	if [[ "$DRY_RUN" == true ]]; then
-		printf '[dry-run] ssh -tt -p %s -o ControlMaster=auto -o ControlPersist=10m -o ControlPath=%q %s bash -s -- %s\n' \
-			"$SSH_PORT" "$SSH_TARGET" "$remote_args"
-		printf '%s\n' "$script"
-		return 0
-	fi
-	ssh -tt -p "$SSH_PORT" \
-		-o "ControlMaster=auto" \
-		-o "ControlPersist=10m" \
-		-o "ControlPath=${SSH_CONTROL_PATH}" \
-		"$SSH_TARGET" "bash -s -- $remote_args" <<<"$script"
-}
-
 build_app() {
-	if [[ "$SKIP_BUILD" == true ]]; then
+	if [[ "$DRY_RUN" == true ]]; then
+		step_begin "local build (dry-run)"
 		log "skipping local build"
+		step_done
+		return
+	fi
+	if [[ "$SKIP_BUILD" == true ]]; then
+		step_begin "local build (skipped)"
+		log "skipping local build"
+		step_done
 		return
 	fi
 
-	log "installing local dependencies"
+	step_begin "install local dependencies"
 	(
 		cd "$REPO_ROOT"
 		npm ci
 	)
+	step_done
 
-	log "building local app"
+	step_begin "build local app"
 	(
 		cd "$REPO_ROOT"
 		npm run build
 	)
+	step_done
 }
 
 sync_app() {
-	log "syncing repository to ${SSH_TARGET}:${INSTALL_DIR}"
+	step_begin "sync repository"
+	log "copying repo to ${SSH_TARGET}:${REMOTE_STAGE_DIR}"
+	if [[ "$DRY_RUN" != true ]]; then
+		open_ssh_master
+	fi
 	run_local rsync -az --delete --no-owner --no-group -e "ssh -p ${SSH_PORT} -o ControlMaster=auto -o ControlPersist=10m -o ControlPath=${SSH_CONTROL_PATH}" \
 		--exclude='.git' \
 		--exclude='.claude' \
@@ -155,29 +287,35 @@ sync_app() {
 		--exclude='node_modules' \
 		--exclude='dist' \
 		--exclude='coverage' \
-		"${REPO_ROOT}/" "${SSH_TARGET}:${INSTALL_DIR}/"
+		"${REPO_ROOT}/" "${SSH_TARGET}:${REMOTE_STAGE_DIR}/"
 
 	if [[ -d "${REPO_ROOT}/build" ]]; then
-		log "syncing build artifacts"
+		log "copying build artifacts"
 		run_local rsync -az --delete --no-owner --no-group -e "ssh -p ${SSH_PORT} -o ControlMaster=auto -o ControlPersist=10m -o ControlPath=${SSH_CONTROL_PATH}" \
-			"${REPO_ROOT}/build/" "${SSH_TARGET}:${INSTALL_DIR}/build/"
+			"${REPO_ROOT}/build/" "${SSH_TARGET}:${REMOTE_STAGE_DIR}/build/"
 	fi
+	step_done
 }
 
 install_remote_service() {
+	step_begin "install remote service"
 	local remote_script
 	remote_script="$(cat <<'EOF'
 set -Eeuo pipefail
 
 INSTALL_DIR="$1"
-DATA_DIR="$2"
-SERVICE_NAME="$3"
-SERVICE_USER="$4"
-SERVICE_GROUP="$5"
-PORT="$6"
-PROXY_MODE="$7"
-DOMAIN="$8"
-CADDY_EMAIL="$9"
+STAGING_DIR="$2"
+DATA_DIR="$3"
+SERVICE_NAME="$4"
+SERVICE_USER="$5"
+SERVICE_GROUP="$6"
+PORT="$7"
+PROXY_MODE="$8"
+DOMAIN="$9"
+CADDY_EMAIL="${10}"
+DRY_RUN=false
+CURRENT_STEP=0
+CURRENT_STEP_LABEL=""
 
 log() {
 	printf '[remote] %s\n' "$*"
@@ -192,6 +330,27 @@ die() {
 	exit 1
 }
 
+hr() {
+	local width="${1:-64}"
+	printf '%*s\n' "$width" '' | tr ' ' '-'
+}
+
+panel_line() {
+	local text="$1"
+	printf '| %-*s |\n' 60 "${text:0:60}"
+}
+
+remote_step_begin() {
+	CURRENT_STEP=$((CURRENT_STEP + 1))
+	CURRENT_STEP_LABEL="$1"
+	printf '\n[remote %d] >>> %s\n' "$CURRENT_STEP" "$CURRENT_STEP_LABEL"
+}
+
+remote_step_done() {
+	printf '[remote %d] [ok] %s\n' "$CURRENT_STEP" "$CURRENT_STEP_LABEL"
+	CURRENT_STEP_LABEL=""
+}
+
 sudo_run() {
 	sudo -n "$@"
 }
@@ -202,6 +361,21 @@ port_is_listening() {
 
 service_is_active() {
 	sudo_run systemctl is-active --quiet "${SERVICE_NAME}.service"
+}
+
+wait_for_ready() {
+	local attempt
+	for attempt in $(seq 1 30); do
+		if service_is_active && port_is_listening; then
+			return 0
+		fi
+		sleep 1
+	done
+
+	warn "service did not become ready on port ${PORT}"
+	sudo_run systemctl status "${SERVICE_NAME}.service" --no-pager -l || true
+	sudo_run journalctl -u "${SERVICE_NAME}.service" --no-pager -n 100 || true
+	die "service failed to bind to port ${PORT}"
 }
 
 choose_port() {
@@ -231,22 +405,10 @@ write_server_env() {
 	rm -f "$tmp"
 }
 
-wait_for_ready() {
-	local attempt
-	for attempt in $(seq 1 30); do
-		if service_is_active && port_is_listening; then
-			return 0
-		fi
-		sleep 1
-	done
-
-	warn "service did not become ready on port ${PORT}"
-	sudo_run systemctl status "${SERVICE_NAME}.service" --no-pager -l || true
-	sudo_run journalctl -u "${SERVICE_NAME}.service" --no-pager -n 100 || true
-	die "service failed to bind to port ${PORT}"
-}
-
 verify_build_artifacts() {
+	if [[ "${DRY_RUN:-false}" == true ]]; then
+		return
+	fi
 	local server_build
 	server_build="$(find "${INSTALL_DIR}/build/server" -type f -name index.js -print -quit 2>/dev/null || true)"
 	if [[ -z "$server_build" ]]; then
@@ -272,6 +434,8 @@ command -v npm >/dev/null 2>&1 || die "npm is required on the remote server"
 command -v node >/dev/null 2>&1 || die "node is required on the remote server"
 command -v systemctl >/dev/null 2>&1 || die "systemctl is required on the remote server"
 command -v ss >/dev/null 2>&1 || die "ss is required on the remote server"
+command -v curl >/dev/null 2>&1 || die "curl is required on the remote server"
+command -v rsync >/dev/null 2>&1 || die "rsync is required on the remote server"
 
 log "refreshing sudo credentials"
 sudo -v
@@ -286,9 +450,51 @@ if [[ "$proxy_mode_resolved" == "auto" ]]; then
 	fi
 fi
 
+printf '\n'
+hr
+panel_line "habla remote installer"
+hr
+panel_line "install  : ${INSTALL_DIR}"
+panel_line "data     : ${DATA_DIR}"
+panel_line "service  : ${SERVICE_NAME}"
+panel_line "port     : ${PORT}"
+panel_line "proxy    : ${proxy_mode_resolved}"
+panel_line "domain   : ${DOMAIN:-<none>}"
+hr
+printf '\n'
+
+remote_step_begin "prepare install directory"
 if [[ "$proxy_mode_resolved" != "none" && -z "$DOMAIN" ]]; then
 	die "a domain is required when reverse proxying"
 fi
+sudo_run install -d -m 0755 "$INSTALL_DIR"
+sudo_run rsync -a --delete "$STAGING_DIR"/ "$INSTALL_DIR"/
+
+local_deploy_user="$(id -un)"
+sudo_run chown -R "$local_deploy_user:$local_deploy_user" "$INSTALL_DIR"
+sudo_run chown -R "$SERVICE_USER:$SERVICE_GROUP" "$DATA_DIR"
+sudo_run chmod 0755 "$INSTALL_DIR" "$DATA_DIR"
+remote_step_done
+
+remote_step_begin "stopping existing service"
+sudo_run systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
+remote_step_done
+
+if port_is_listening; then
+	choose_port
+	log "selected port ${PORT}"
+fi
+
+remote_step_begin "write environment file"
+write_server_env
+remote_step_done
+
+remote_step_begin "install remote production dependencies"
+cd "$INSTALL_DIR"
+npm ci --omit=dev --no-audit --no-fund
+remote_step_done
+
+verify_build_artifacts
 
 write_managed_file() {
 	local target="$1"
@@ -330,6 +536,10 @@ SERVICEEOF
 	sudo_run install -m 0644 /tmp/${SERVICE_NAME}.service /etc/systemd/system/${SERVICE_NAME}.service
 	rm -f /tmp/${SERVICE_NAME}.service
 }
+
+remote_step_begin "write systemd service"
+install_service
+remote_step_done
 
 detect_caddy_snippet_dir() {
 	local main_file="/etc/caddy/Caddyfile"
@@ -380,6 +590,13 @@ ${import_line}"
 	else
 		if grep -qE '^[[:space:]]*import[[:space:]].*(/etc/caddy/)?(conf\.d|Caddyfile\.d)/\*\.caddy' "$main_file"; then
 			log "existing Caddyfile already imports a snippet directory; leaving it unchanged"
+		elif grep -qF "$managed_marker" "$main_file"; then
+			log "existing Caddyfile is managed by habla; adding snippet import"
+			local current_content
+			current_content="$(cat "$main_file")"
+			write_managed_file "$main_file" "${current_content}
+
+${import_line}"
 		else
 			warn "existing Caddyfile does not import ${snippet_dir}; not modifying it"
 			warn "add this line manually if needed: ${import_line}"
@@ -473,7 +690,7 @@ server {
 					die "${sites_enabled} points to ${current_target}; refusing to change it"
 				fi
 			else
-			sudo_run ln -s "$sites_available" "$sites_enabled"
+				sudo_run ln -s "$sites_available" "$sites_enabled"
 			fi
 			;;
 		unknown)
@@ -507,43 +724,20 @@ configure_proxy() {
 	esac
 }
 
-cd "$INSTALL_DIR"
-
-log "normalizing ownership"
-local_deploy_user="$(id -un)"
-sudo_run mkdir -p "$INSTALL_DIR" "$DATA_DIR"
-sudo_run chown -R "$local_deploy_user:$local_deploy_user" "$INSTALL_DIR"
-sudo_run chown -R "$SERVICE_USER:$SERVICE_GROUP" "$DATA_DIR"
-sudo_run chmod 0755 "$INSTALL_DIR" "$DATA_DIR"
-
-log "stopping existing service"
-sudo_run systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
-
-if port_is_listening; then
-	choose_port
-fi
-
-write_server_env
-
-log "installing production dependencies"
-npm ci --omit=dev --no-audit --no-fund
-
-verify_build_artifacts
-
-log "writing systemd service"
-install_service
-
 log "reloading systemd"
 sudo_run systemctl daemon-reload
 sudo_run systemctl reset-failed "${SERVICE_NAME}.service" 2>/dev/null || true
 sudo_run systemctl enable "${SERVICE_NAME}.service"
 sudo_run systemctl start "${SERVICE_NAME}.service"
 
-log "smoke testing"
+remote_step_begin "smoke test"
 wait_for_ready
 curl -fsS "http://127.0.0.1:${PORT}/" >/dev/null
+remote_step_done
 
+remote_step_begin "configure reverse proxy"
 configure_proxy
+remote_step_done
 
 log "deployment complete"
 EOF
@@ -552,12 +746,15 @@ EOF
 	remote_script_file="$(mktemp)"
 	printf '%s\n' "$remote_script" >"$remote_script_file"
 	if [[ "$DRY_RUN" == true ]]; then
-		printf '[dry-run] scp -P %s -o ControlMaster=auto -o ControlPersist=10m -o ControlPath=%q %s %s:%s\n' \
-			"$SSH_PORT" "$remote_script_file" "$SSH_TARGET" "/tmp/${SERVICE_NAME}-deploy.sh"
-		printf '[dry-run] ssh -tt -p %s -o ControlMaster=auto -o ControlPersist=10m -o ControlPath=%q %s bash %s %q %q %q %q %q %q %q %q\n' \
-			"$SSH_PORT" "$SSH_TARGET" "/tmp/${SERVICE_NAME}-deploy.sh" \
-			"$INSTALL_DIR" "$DATA_DIR" "$SERVICE_NAME" "$SERVICE_USER" "$SERVICE_GROUP" "$PORT" "$PROXY_MODE" "$DOMAIN" "$CADDY_EMAIL"
+		local remote_args
+		printf -v remote_args '%q %q %q %q %q %q %q %q %q %q' \
+			"$INSTALL_DIR" "$REMOTE_STAGE_DIR" "$DATA_DIR" "$SERVICE_NAME" "$SERVICE_USER" "$SERVICE_GROUP" "$PORT" "$PROXY_MODE" "$DOMAIN" "$CADDY_EMAIL"
+		printf '[dry-run] scp -P %s -o ControlMaster=auto -o ControlPersist=10m -o ControlPath=%q %q %q:%q\n' \
+			"$SSH_PORT" "$SSH_CONTROL_PATH" "$remote_script_file" "$SSH_TARGET" "/tmp/${SERVICE_NAME}-deploy.sh"
+		printf '[dry-run] ssh -tt -p %s -o ControlMaster=auto -o ControlPersist=10m -o ControlPath=%q %q bash %q %s\n' \
+			"$SSH_PORT" "$SSH_CONTROL_PATH" "$SSH_TARGET" "/tmp/${SERVICE_NAME}-deploy.sh" "$remote_args"
 		rm -f "$remote_script_file"
+		step_done
 		return 0
 	fi
 	open_ssh_master
@@ -571,7 +768,8 @@ EOF
 		-o "ControlMaster=auto" \
 		-o "ControlPersist=10m" \
 		-o "ControlPath=${SSH_CONTROL_PATH}" \
-		"$SSH_TARGET" "bash /tmp/${SERVICE_NAME}-deploy.sh $(printf '%q ' "$INSTALL_DIR" "$DATA_DIR" "$SERVICE_NAME" "$SERVICE_USER" "$SERVICE_GROUP" "$PORT" "$PROXY_MODE" "$DOMAIN" "$CADDY_EMAIL")"
+		"$SSH_TARGET" "bash /tmp/${SERVICE_NAME}-deploy.sh $(printf '%q ' "$INSTALL_DIR" "$REMOTE_STAGE_DIR" "$DATA_DIR" "$SERVICE_NAME" "$SERVICE_USER" "$SERVICE_GROUP" "$PORT" "$PROXY_MODE" "$DOMAIN" "$CADDY_EMAIL")"
+	step_done
 }
 
 while [[ $# -gt 0 ]]; do
@@ -586,6 +784,10 @@ while [[ $# -gt 0 ]]; do
 			;;
 		--install-dir)
 			INSTALL_DIR="${2:-}"
+			shift 2
+			;;
+		--data-dir)
+			DATA_DIR="${2:-}"
 			shift 2
 			;;
 		--service-user)
@@ -630,39 +832,63 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-SSH_TARGET="${HABLA_SSH_TARGET:-$SSH_TARGET}"
-PORT="${HABLA_PORT:-$PORT}"
-INSTALL_DIR="${HABLA_INSTALL_DIR:-$INSTALL_DIR}"
-SERVICE_USER="${HABLA_SERVICE_USER:-$SERVICE_USER}"
-SERVICE_GROUP="${HABLA_SERVICE_GROUP:-$SERVICE_GROUP}"
-PROXY_MODE="${HABLA_PROXY:-$PROXY_MODE}"
-DOMAIN="${HABLA_DOMAIN:-$DOMAIN}"
-CADDY_EMAIL="${HABLA_CADDY_EMAIL:-$CADDY_EMAIL}"
-SSH_PORT="${HABLA_SSH_PORT:-$SSH_PORT}"
-
-if is_true "${HABLA_DRY_RUN:-false}"; then
-	DRY_RUN=true
+if [[ -z "$SSH_TARGET" ]]; then
+	SSH_TARGET="${HABLA_SSH_TARGET:-}"
 fi
-if is_true "${HABLA_SKIP_BUILD:-false}"; then
-	SKIP_BUILD=true
+if [[ -z "$SSH_TARGET" ]]; then
+	usage
+	die "missing required option: --host"
 fi
 
-[[ -n "$SSH_TARGET" ]] || die "an SSH host is required; pass --host user@server or set HABLA_SSH_TARGET"
-case "$PROXY_MODE" in
-	auto|caddy|nginx|none) ;;
-	*) die "invalid proxy mode: $PROXY_MODE" ;;
-esac
-if [[ "$PROXY_MODE" != "none" && -z "$DOMAIN" ]]; then
-	die "a domain is required when proxy mode is ${PROXY_MODE}"
+if [[ "$PORT" == "3000" && -n "${HABLA_PORT:-}" ]]; then
+	PORT="$HABLA_PORT"
 fi
-if [[ "$PROXY_MODE" == "caddy" && -z "$CADDY_EMAIL" ]]; then
-	warn "no Caddy email provided; Lets Encrypt contact email will be omitted"
+if [[ "$INSTALL_DIR" == "/var/www/habla" && -n "${HABLA_INSTALL_DIR:-}" ]]; then
+	INSTALL_DIR="$HABLA_INSTALL_DIR"
+fi
+if [[ "$DATA_DIR" == "/var/lib/habla" && -n "${HABLA_DATA_DIR:-}" ]]; then
+	DATA_DIR="$HABLA_DATA_DIR"
+fi
+if [[ "$SERVICE_USER" == "www-data" && -n "${HABLA_SERVICE_USER:-}" ]]; then
+	SERVICE_USER="$HABLA_SERVICE_USER"
+fi
+if [[ "$SERVICE_GROUP" == "www-data" && -n "${HABLA_SERVICE_GROUP:-}" ]]; then
+	SERVICE_GROUP="$HABLA_SERVICE_GROUP"
+fi
+if [[ "$PROXY_MODE" == "auto" && -n "${HABLA_PROXY:-}" ]]; then
+	PROXY_MODE="$HABLA_PROXY"
+fi
+if [[ -z "$DOMAIN" ]]; then
+	DOMAIN="${HABLA_DOMAIN:-}"
+fi
+if [[ -z "$CADDY_EMAIL" ]]; then
+	CADDY_EMAIL="${HABLA_CADDY_EMAIL:-}"
+fi
+if [[ "$SSH_PORT" == "22" && -n "${HABLA_SSH_PORT:-}" ]]; then
+	SSH_PORT="$HABLA_SSH_PORT"
+fi
+if [[ "$DRY_RUN" == false && -n "${HABLA_DRY_RUN:-}" ]]; then
+	is_true "$HABLA_DRY_RUN" && DRY_RUN=true || true
+fi
+if [[ "$SKIP_BUILD" == false && -n "${HABLA_SKIP_BUILD:-}" ]]; then
+	is_true "$HABLA_SKIP_BUILD" && SKIP_BUILD=true || true
 fi
 
-command -v rsync >/dev/null 2>&1 || die "rsync is required"
-command -v ssh >/dev/null 2>&1 || die "ssh is required"
-command -v scp >/dev/null 2>&1 || die "scp is required"
-command -v npm >/dev/null 2>&1 || die "npm is required"
+proxy_mode_resolved="$PROXY_MODE"
+
+trap 'on_error $? $LINENO' ERR
+
+if [[ "$DRY_RUN" == true ]]; then
+	log "performing dry-run deployment"
+fi
+
+if [[ ! -t 0 ]]; then
+	log "non-interactive tty"
+else
+	TTY_AVAILABLE=true
+fi
+
+render_header
 
 build_app
 sync_app

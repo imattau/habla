@@ -111,6 +111,43 @@ describe("ai drafting settings persistence", () => {
     expect(reloaded.loadAIDraftingSettings(account.pubkey)).toEqual(settings);
   });
 
+  it("round-trips unified settings including theme, currency, and wallet metadata", async () => {
+    const { saveAIDraftingSettings, hydrateAIDraftingSettings, loadAIDraftingSettings } =
+      await import("./ai-drafting");
+    const account = createAccount();
+    const settings = {
+      provider: "openai" as const,
+      apiKey: "sk-openai-key",
+      model: "gpt-4.1-mini",
+    };
+
+    // Set mock local storage values
+    window.localStorage.setItem("habla-theme", "dark");
+    window.localStorage.setItem("fiat-currency", "EUR");
+    window.localStorage.setItem("wallet", JSON.stringify({ type: "nwc", uri: "nostr+walletconnect://..." }));
+
+    await saveAIDraftingSettings(account, settings);
+    expect(loadAIDraftingSettings(account.pubkey)).toEqual(settings);
+    expect(publishMock).toHaveBeenCalledTimes(1);
+
+    // Clear local storage to simulate a new device/session
+    window.localStorage.removeItem("habla-theme");
+    window.localStorage.removeItem("fiat-currency");
+    window.localStorage.removeItem("wallet");
+
+    vi.resetModules();
+    const reloaded = await import("./ai-drafting");
+    const hydrated = await reloaded.hydrateAIDraftingSettings(account);
+
+    expect(hydrated).toEqual(settings);
+    expect(window.localStorage.getItem("habla-theme")).toEqual("dark");
+    expect(window.localStorage.getItem("fiat-currency")).toEqual("EUR");
+    expect(JSON.parse(window.localStorage.getItem("wallet") || "{}")).toEqual({
+      type: "nwc",
+      uri: "nostr+walletconnect://...",
+    });
+  });
+
   it("clears settings by publishing and caching defaults", async () => {
     const {
       saveAIDraftingSettings,
