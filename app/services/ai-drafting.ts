@@ -188,17 +188,50 @@ function clearEncryptedSettingsEvent(pubkey: string): void {
   window.localStorage.removeItem(encryptedStorageKey(pubkey));
 }
 
+const DECRYPTED_CACHE_KEY = "habla:ai-drafting:decrypted";
+function decryptedStorageKey(pubkey: string): string {
+  return `${DECRYPTED_CACHE_KEY}:${pubkey}`;
+}
+
 function storeCachedSettings(
   pubkey: string,
   settings: AIDraftingSettings,
 ): AIDraftingSettings {
   const normalized = normalizeAIDraftingSettings(settings);
   settingsCache.set(pubkey, normalized);
+  if (typeof window !== "undefined") {
+    const theme = window.localStorage.getItem("habla-theme");
+    const currency = window.localStorage.getItem("fiat-currency");
+    const walletRaw = window.localStorage.getItem("wallet");
+    const wallet = walletRaw ? safeParse(walletRaw) : null;
+
+    const cachePayload = {
+      settings: normalized,
+      theme,
+      currency,
+      wallet,
+    };
+    window.localStorage.setItem(decryptedStorageKey(pubkey), JSON.stringify(cachePayload));
+  }
   return normalized;
 }
 
 export function loadAIDraftingSettings(pubkey: string): AIDraftingSettings {
-  return settingsCache.get(pubkey) || getDefaultAIDraftingSettings();
+  if (settingsCache.has(pubkey)) {
+    return settingsCache.get(pubkey)!;
+  }
+  if (typeof window !== "undefined") {
+    const raw = window.localStorage.getItem(decryptedStorageKey(pubkey));
+    if (raw) {
+      const parsed = safeParse(raw) as any;
+      if (parsed && parsed.settings) {
+        const normalized = normalizeAIDraftingSettings(parsed.settings);
+        settingsCache.set(pubkey, normalized);
+        return normalized;
+      }
+    }
+  }
+  return getDefaultAIDraftingSettings();
 }
 
 export function hasLoadedAIDraftingSettings(pubkey: string): boolean {
@@ -241,6 +274,34 @@ async function getSettingsRelays(pubkey: string): Promise<string[]> {
   return [...new Set([...AGGREGATOR_RELAYS, ...(await fetchUserRelays(pubkey))])];
 }
 
+function applyEnvelopeSettings(parsed: Partial<AIDraftingSettingsEnvelope>) {
+  if (typeof window === "undefined") return;
+  if (parsed.theme) {
+    window.localStorage.setItem("habla-theme", parsed.theme);
+    if (typeof StorageEvent !== "undefined") {
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: "habla-theme", newValue: parsed.theme }),
+      );
+    }
+  }
+  if (parsed.currency) {
+    window.localStorage.setItem("fiat-currency", parsed.currency);
+    if (typeof StorageEvent !== "undefined") {
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: "fiat-currency", newValue: parsed.currency }),
+      );
+    }
+  }
+  if (parsed.wallet) {
+    window.localStorage.setItem("wallet", JSON.stringify(parsed.wallet));
+    if (typeof StorageEvent !== "undefined") {
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: "wallet", newValue: JSON.stringify(parsed.wallet) }),
+      );
+    }
+  }
+}
+
 async function decryptSettingsEvent(
   account: EncryptedSigner,
   event: EncryptedAIDraftingSettingsEvent,
@@ -259,31 +320,7 @@ async function decryptSettingsEvent(
         parsed.version === 1 &&
         parsed.settings
       ) {
-        if (parsed.theme && typeof window !== "undefined") {
-          window.localStorage.setItem("habla-theme", parsed.theme);
-          if (typeof StorageEvent !== "undefined") {
-            window.dispatchEvent(
-              new StorageEvent("storage", { key: "habla-theme", newValue: parsed.theme }),
-            );
-          }
-        }
-        if (parsed.currency && typeof window !== "undefined") {
-          window.localStorage.setItem("fiat-currency", parsed.currency);
-          if (typeof StorageEvent !== "undefined") {
-            window.dispatchEvent(
-              new StorageEvent("storage", { key: "fiat-currency", newValue: parsed.currency }),
-            );
-          }
-        }
-        if (parsed.wallet && typeof window !== "undefined") {
-          window.localStorage.setItem("wallet", JSON.stringify(parsed.wallet));
-          if (typeof StorageEvent !== "undefined") {
-            window.dispatchEvent(
-              new StorageEvent("storage", { key: "wallet", newValue: JSON.stringify(parsed.wallet) }),
-            );
-          }
-        }
-
+        applyEnvelopeSettings(parsed);
         return normalizeAIDraftingSettings(parsed.settings);
       }
     } catch (error) {
@@ -312,37 +349,49 @@ export async function hydrateAIDraftingSettings(
   if (inFlight) return inFlight;
 
   const task = (async () => {
-    let cachedSettings: AIDraftingSettings | null = null;
+    let cachedDecrypted: any = null;
+    if (typeof window !== "undefined") {
+      const raw = window.localStorage.getItem(decryptedStorageKey(account.pubkey));
+      if (raw) {
+        cachedDecrypted = safeParse(raw);
+      }
+    }
+
     const cachedEvent = getCachedEncryptedSettings(account.pubkey);
+
+    if (options.force) {
+      for (let attempt = 0; attempt < HYDRATE_RETRIES; attempt++) {
+        const remoteEvent = await fetchSettingsEvent(account.pubkey);
+        if (remoteEvent) {
+          if (cachedEvent && remoteEvent.id === cachedEvent.id && cachedDecrypted && cachedDecrypted.settings) {
+            applyEnvelopeSettings(cachedDecrypted);
+            return storeCachedSettings(account.pubkey, cachedDecrypted.settings);
+          }
+          const decrypted = await decryptSettingsEvent(account, remoteEvent);
+          if (decrypted) {
+            saveEncryptedSettingsEvent(account.pubkey, remoteEvent);
+            return storeCachedSettings(account.pubkey, decrypted);
+          }
+        }
+        if (attempt < HYDRATE_RETRIES - 1) {
+          await sleep(HYDRATE_RETRY_DELAY_MS);
+        }
+      }
+    }
+
+    if (cachedDecrypted && cachedDecrypted.settings) {
+      applyEnvelopeSettings(cachedDecrypted);
+      return storeCachedSettings(account.pubkey, cachedDecrypted.settings);
+    }
+
     if (cachedEvent) {
       const decrypted = await decryptSettingsEvent(account, cachedEvent);
       if (decrypted) {
-        cachedSettings = storeCachedSettings(account.pubkey, decrypted);
-        if (!options.force) {
-          return cachedSettings;
-        }
+        return storeCachedSettings(account.pubkey, decrypted);
       }
     }
 
-    for (let attempt = 0; attempt < HYDRATE_RETRIES; attempt++) {
-      const remoteEvent = await fetchSettingsEvent(account.pubkey);
-      if (remoteEvent) {
-        const decrypted = await decryptSettingsEvent(account, remoteEvent);
-        if (decrypted) {
-          saveEncryptedSettingsEvent(account.pubkey, remoteEvent);
-          return storeCachedSettings(account.pubkey, decrypted);
-        }
-      }
-
-      if (attempt < HYDRATE_RETRIES - 1) {
-        await sleep(HYDRATE_RETRY_DELAY_MS);
-      }
-    }
-
-    return (
-      cachedSettings ||
-      storeCachedSettings(account.pubkey, getDefaultAIDraftingSettings())
-    );
+    return storeCachedSettings(account.pubkey, getDefaultAIDraftingSettings());
   })();
 
   hydrationInFlight.set(account.pubkey, task);
