@@ -7,6 +7,7 @@ const publishMock = vi.hoisted(() =>
 );
 const requestMock = vi.hoisted(() => vi.fn(() => of("EOSE")));
 const profileLoaderMock = vi.hoisted(() => vi.fn(() => of(undefined)));
+const addressLoaderMock = vi.hoisted(() => vi.fn(() => of(undefined)));
 
 vi.mock("~/services/relay-pool", () => ({
   default: {
@@ -17,6 +18,7 @@ vi.mock("~/services/relay-pool", () => ({
 
 vi.mock("~/services/loaders", () => ({
   profileLoader: profileLoaderMock,
+  addressLoader: addressLoaderMock,
 }));
 
 type LocalStorageMock = {
@@ -192,8 +194,8 @@ describe("ai drafting settings persistence", () => {
       sig: "sig",
     } as NostrEvent;
 
-    requestMock.mockReturnValueOnce(of() as any);
-    requestMock.mockReturnValueOnce(of(encryptedEvent) as any);
+    addressLoaderMock.mockReturnValueOnce(of(undefined) as any);
+    addressLoaderMock.mockReturnValueOnce(of(encryptedEvent) as any);
 
     const hydrated = await hydrateAIDraftingSettings(account, { force: true });
 
@@ -203,6 +205,6 @@ describe("ai drafting settings persistence", () => {
       model: "llama-3.3-70b-versatile",
     });
     expect(loadAIDraftingSettings(account.pubkey)).toEqual(hydrated);
-    expect(requestMock).toHaveBeenCalledTimes(2);
+    expect(addressLoaderMock).toHaveBeenCalledTimes(2);
   });
 });

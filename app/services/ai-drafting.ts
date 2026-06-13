@@ -3,7 +3,7 @@ import { firstValueFrom, toArray } from "rxjs";
 import { kinds, type NostrEvent } from "nostr-tools";
 import { AGGREGATOR_RELAYS } from "~/const";
 import { getRelayURLs } from "~/lib/url";
-import { profileLoader } from "~/services/loaders";
+import { addressLoader, profileLoader } from "~/services/loaders";
 import pool from "~/services/relay-pool";
 
 export type AIProvider = "openai" | "groq";
@@ -251,19 +251,15 @@ async function fetchUserRelays(pubkey: string): Promise<string[]> {
 async function fetchSettingsEvent(pubkey: string): Promise<NostrEvent | null> {
   const relays = [...new Set([...AGGREGATOR_RELAYS, ...(await fetchUserRelays(pubkey))])];
   try {
-    const events = await firstValueFrom(
-      pool
-        .request(relays, {
-          kinds: [SETTINGS_KIND],
-          authors: [pubkey],
-          "#d": [SETTINGS_IDENTIFIER],
-          limit: 10,
-        })
-        .pipe(toArray()),
+    const event = await firstValueFrom(
+      addressLoader({
+        kind: SETTINGS_KIND,
+        pubkey,
+        identifier: SETTINGS_IDENTIFIER,
+        relays,
+      }),
     );
-
-    const latest = [...events].sort((a, b) => b.created_at - a.created_at)[0];
-    return latest || null;
+    return event || null;
   } catch (error) {
     console.warn("[ai-drafting] Failed to fetch remote settings:", error);
     return null;
